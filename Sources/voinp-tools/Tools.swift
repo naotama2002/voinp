@@ -12,7 +12,14 @@ import VoinpEngine
 struct Tools {
     static func main() async {
         let provider = AppleSpeechProvider()
-        let identifier = CommandLine.arguments.dropFirst().first ?? "ja-JP"
+        var args = Array(CommandLine.arguments.dropFirst())
+
+        // 既定でダウンロードまで行う破壊的な挙動なので、確認だけしたい場合の口を用意する。
+        // （用意していなかったせいで、状態を見るつもりが 2 ロケール分ダウンロードさせた）
+        let checkOnly = args.contains("--check")
+        args.removeAll { $0.hasPrefix("--") }
+
+        let identifier = args.first ?? "ja-JP"
         let locale = Locale(identifier: identifier)
         let request = TranscriptionRequest(locale: locale)
 
@@ -25,6 +32,10 @@ struct Tools {
             exit(1)
 
         case .needsModelDownload(let canonical):
+            guard !checkOnly else {
+                print("⬜ \(identifier): 未取得（--check のため取得しません）")
+                return
+            }
             print("⬇️  \(canonical.identifier(.bcp47)) のモデルを取得します…")
             do {
                 try await provider.downloadModel(for: canonical) { p in

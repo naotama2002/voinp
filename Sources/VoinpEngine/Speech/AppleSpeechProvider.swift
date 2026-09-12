@@ -26,6 +26,17 @@ public struct AppleSpeechProvider: TranscriptionProvider {
         guard let canonical = await DictationTranscriber.supportedLocale(equivalentTo: request.locale)
         else { return .unsupported("\(request.locale.identifier) は未対応です") }
 
+        // **status を見る前に予約する。**
+        //
+        // 予約はプロセスごとで、新しいプロセスは必ず reservedLocales = [] から始まる。
+        // 未予約のロケールは、資産がディスク上にあっても status が .supported
+        // （= 未インストール）と報告される。
+        // 予約せずに判定すると、**起動のたびに「モデル未取得」と誤判定**し、
+        // セットアップウィザードが毎回ダウンロードを促すことになる（実際にそうなっていた）。
+        //
+        // 予約は冪等で、同時に 5 ロケールまで保持できる。
+        _ = try? await AssetInventory.reserve(locale: canonical)
+
         let t = makeTranscriber(locale: canonical, request: request)
         // installedLocales は当てにならない。必ず status(forModules:) で判定する。
         switch await AssetInventory.status(forModules: [t]) {
@@ -56,7 +67,12 @@ public struct AppleSpeechProvider: TranscriptionProvider {
 
         // **予約しないと OS に資産を削除されうる。**
         // 数週間後に突然また初回ダウンロードが走る、という掴みにくい不具合になる。
-        _ = try? await AssetInventory.reserve(locale: canonical)
+        // 失敗は握り潰さずログに残す（上限 5 ロケールに達している等）。
+        do {
+            _ = try await AssetInventory.reserve(locale: canonical)
+        } catch {
+            Log.speech.error("ロケールを予約できません: \(String(describing: error), privacy: .public)")
+        }
     }
 
     public func preferredFormat(for request: TranscriptionRequest) async -> AudioFormatDescription {

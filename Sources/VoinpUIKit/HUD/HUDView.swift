@@ -20,18 +20,27 @@ struct HUDView: View {
             WaveformView(level: model.level, active: model.phase.isListening)
                 .frame(height: 22)
 
-            if model.settings.ui.hudShowText {
+            if model.settings.ui.hudShowText, !model.snapshot.fullText.isEmpty {
                 // 確定分と暫定分を描き分ける。暫定は次の結果で丸ごと置き換わる。
+                //
+                // 喋り続けると必ず幅を超えるので、**末尾（最新）が見えるように切る**。
+                // 先頭を残すと、いま喋っている内容が見えなくなって役に立たない。
                 Text("\(model.snapshot.committed)\(Text(model.snapshot.volatileTail).foregroundStyle(.secondary))")
                     .font(.system(size: 13))
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .lineLimit(2)
+                    .lineLimit(Self.maxLines, reservesSpace: false)
+                    .truncationMode(.head)
+                    .textSelection(.enabled)
             }
         }
         .padding(14)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-        .frame(width: 420)
+        .frame(width: Self.width)
+        .fixedSize(horizontal: false, vertical: true)   // 高さは内容に合わせて伸びる
     }
+
+    static let width: CGFloat = 520
+    static let maxLines = 6
 
     private var icon: String {
         switch model.phase {

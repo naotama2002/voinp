@@ -85,7 +85,12 @@ public actor DictationCoordinator {
                 await dispatch(.failed(.transcriptionFailed(.transcriberUnavailable)))
                 return
             }
-            await dispatch(.transcriptionFinished(text: buffer.finalText))
+            // **イベントの適用が終わるまで待つ。**
+            // finish() の直後に buffer を読むと、確定結果の適用が間に合わず空になる。
+            await resultTask?.value
+            let text = buffer.bestEffortText
+            Log.session.info("確定テキスト \(text.count, privacy: .public) 文字")
+            await dispatch(.transcriptionFinished(text: text))
 
         case .abortEverything:
             await capture.stop()

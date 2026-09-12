@@ -49,7 +49,8 @@ public struct TranscriptBuffer: Equatable, Sendable {
             committedEnd = max(committedEnd ?? range.upperBound, range.upperBound)
 
         case .ended:
-            volatileTail = ""
+            // 確定結果が 1 つも来ていなければ暫定分を残す（bestEffortText の材料）。
+            if !segments.isEmpty || !untimedText.isEmpty { volatileTail = "" }
         }
     }
 
@@ -68,6 +69,16 @@ public struct TranscriptBuffer: Equatable, Sendable {
     }
 
     public var isEmpty: Bool { finalText.isEmpty }
+
+    /// 挿入に使うテキスト。
+    ///
+    /// 確定結果が来ないまま終わる場合（短い発話など）に備えて、
+    /// 確定が空なら暫定分を採用する。**ユーザーの発話を落とさないことを優先する。**
+    public var bestEffortText: String {
+        let committedText = finalText
+        if !committedText.isEmpty { return committedText }
+        return volatileTail.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     public mutating func reset() {
         segments.removeAll()

@@ -55,17 +55,61 @@ struct TranscriptBufferTests {
         #expect(!b.isEmpty)
     }
 
-    @Test("ended で暫定分は消える（確定していない推定を残さない）")
-    func endedDropsVolatile() {
+    @Test("ended: 確定があれば暫定を捨てる（推定を残して二重化しない）")
+    func endedDropsVolatileWhenFinalsExist() {
         var b = TranscriptBuffer()
+        b.apply(.finalized(.init(text: "確定分。")))
         b.apply(.partial("未確定"))
         b.apply(.ended(.init(fullText: "", locale: .init(identifier: "ja-JP"),
                              audioDuration: .seconds(1), providerID: "test")))
         #expect(b.snapshot().volatileTail == "")
-        #expect(b.isEmpty)
+        #expect(b.committed == "確定分。")
+    }
+
+    @Test("ended: 確定が 1 つも無ければ暫定を残す（発話を落とさない）")
+    func endedKeepsVolatileWhenNoFinals() {
+        var b = TranscriptBuffer()
+        b.apply(.partial("未確定だけの発話"))
+        b.apply(.ended(.init(fullText: "", locale: .init(identifier: "ja-JP"),
+                             audioDuration: .seconds(1), providerID: "test")))
+        // committed は空のままだが、挿入候補としては残る
+        #expect(b.isEmpty, "確定テキストとしては空")
+        #expect(b.bestEffortText == "未確定だけの発話", "挿入候補としては残る")
     }
 }
 
 extension ClosedRange where Bound == Duration {
     static func zero(to end: Duration) -> ClosedRange<Duration> { .seconds(0)...end }
+}
+
+@Suite("TranscriptBuffer — 取りこぼし防止")
+struct TranscriptBufferFallbackTests {
+
+    @Test("確定が来なくても暫定分を挿入候補として返す")
+    func volatileSurvivesWhenNoFinal() {
+        var b = TranscriptBuffer()
+        b.apply(.partial("短い発話"))
+        b.apply(.ended(.init(fullText: "", locale: .init(identifier: "ja-JP"),
+                             audioDuration: .seconds(1), providerID: "t")))
+        #expect(b.bestEffortText == "短い発話",
+                "確定が無いからと発話を捨ててはいけない")
+    }
+
+    @Test("確定があれば暫定は捨てる（二重化しない）")
+    func finalWinsOverVolatile() {
+        var b = TranscriptBuffer()
+        b.apply(.partial("こんにち"))
+        b.apply(.finalized(.init(text: "こんにちは。")))
+        b.apply(.ended(.init(fullText: "", locale: .init(identifier: "ja-JP"),
+                             audioDuration: .seconds(1), providerID: "t")))
+        #expect(b.bestEffortText == "こんにちは。")
+    }
+
+    @Test("何も無ければ空")
+    func emptyStaysEmpty() {
+        var b = TranscriptBuffer()
+        b.apply(.ended(.init(fullText: "", locale: .init(identifier: "ja-JP"),
+                             audioDuration: .zero, providerID: "t")))
+        #expect(b.bestEffortText.isEmpty)
+    }
 }

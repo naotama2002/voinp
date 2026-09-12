@@ -157,6 +157,9 @@ actor AppleSpeechSession: TranscriptionSession {
             try await group.next()
             group.cancelAll()
         }
+        // **結果を全部流し切ってから閉じる。**
+        // 先に閉じると最後の確定結果が捨てられ、確定テキストが空になる。
+        await resultTask?.value
         eventContinuation.finish()
     }
 

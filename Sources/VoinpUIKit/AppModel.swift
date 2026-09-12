@@ -96,7 +96,9 @@ public final class AppModel {
             if case .failed(let e) = p { lastError = HUDView.message(for: e) }
             if case .idle = p { snapshot = .empty; level = 0; modelProgress = nil }
             updateHUD(for: p)
-        case .snapshot(let s): snapshot = s
+        case .snapshot(let s):
+            snapshot = s
+            hud?.refreshLayout()   // テキストが伸びたら高さを追従させる
         case .level(let l): level = l
         case .modelProgress(let p): modelProgress = p
         }

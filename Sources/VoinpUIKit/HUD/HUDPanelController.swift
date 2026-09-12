@@ -14,7 +14,7 @@ final class HUDPanelController {
 
     init(model: AppModel) {
         panel = NonActivatingPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 96),
+            contentRect: NSRect(x: 0, y: 0, width: HUDView.width, height: 96),
             styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
             backing: .buffered, defer: false)
 
@@ -31,16 +31,38 @@ final class HUDPanelController {
         // （ヘッダが「一部のシステムサービスに参加できなくなる」と警告している）。
         // 確実に見せたくない場合は ui.hudShowText = false を使う。
         panel.sharingType = .none
-        panel.contentView = NSHostingView(rootView: HUDView(model: model))
+
+        // 認識テキストが伸びると高さも変わるので、内容に合わせてパネルを追従させる。
+        let hosting = NSHostingView(rootView: HUDView(model: model))
+        hosting.sizingOptions = [.preferredContentSize]
+        panel.contentView = hosting
+        self.hosting = hosting
     }
 
+    private var hosting: NSHostingView<HUDView>?
+
     func show() {
+        resizeToFit()
         reposition()
         // makeKeyAndOrderFront は絶対に使わない。アプリがアクティブになり挿入先を失う。
         panel.orderFrontRegardless()
     }
 
+    /// 認識中は内容が育つので、表示のたびに高さを取り直す。
+    func refreshLayout() {
+        guard panel.isVisible else { return }
+        resizeToFit()
+        reposition()
+    }
+
     func hide() { panel.orderOut(nil) }
+
+    private func resizeToFit() {
+        guard let hosting else { return }
+        let fitting = hosting.fittingSize
+        guard fitting.height > 0 else { return }
+        panel.setContentSize(NSSize(width: HUDView.width, height: fitting.height))
+    }
 
     private func reposition() {
         let mouse = NSEvent.mouseLocation

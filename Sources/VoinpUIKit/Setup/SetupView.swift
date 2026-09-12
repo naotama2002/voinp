@@ -92,7 +92,14 @@ public struct SetupView: View {
                 .microphone,
                 icon: "mic.fill",
                 title: "マイクの使用を許可してください",
-                body: "音声を認識するために必要です。音声はこの Mac 上でのみ処理され、保存されません。")
+                body: """
+                音声を認識するために必要です。
+                音声はこの Mac 上でのみ処理され、保存されません。
+
+                システム設定で許可したあと macOS が
+                「終了して再度開く」を促してきたら、そのまま選んでください。
+                起動し直すとこの画面に戻ってきます。
+                """)
 
         case .accessibility:
             permissionStep(
@@ -149,14 +156,12 @@ public struct SetupView: View {
                 Text("許可すると自動的に次へ進みます。")
                     .font(.system(size: 11)).foregroundStyle(.tertiary)
 
-                if p == .accessibility {
-                    HStack(spacing: 6) {
-                        Text("許可したのに反映されない場合は")
-                        Button("Voinp を再起動") { model.relaunch() }
-                            .buttonStyle(.link)
-                    }
-                    .font(.system(size: 11)).foregroundStyle(.tertiary)
+                HStack(spacing: 6) {
+                    Text("許可したのに反映されない場合は")
+                    Button("Voinp を再起動") { model.relaunch() }
+                        .buttonStyle(.link)
                 }
+                .font(.system(size: 11)).foregroundStyle(.tertiary)
             }
             Spacer()
         }

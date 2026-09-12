@@ -29,13 +29,40 @@ public enum Permissions {
         AVCaptureDevice.authorizationStatus(for: .audio)
     }
 
+    /// マイクが実際に使えるか。
+    ///
+    /// `authorizationStatus` はプロセス内でキャッシュされることがあり、
+    /// システム設定で許可してもアプリを再起動するまで古い値を返す
+    /// （macOS が「終了して再度開く」を促すのはこのため）。
+    ///
+    /// `AVAudioEngine.start()` は判定に使えない。**拒否されていても成功し、
+    /// 無音のバッファを返す**ため、成功しても許可の証明にならない。
+    /// `AVCaptureDeviceInput` の生成は未許可なら throw するので、
+    /// こちらを機能的な判定に使う。
+    public static func canOpenMicrophone() -> Bool {
+        guard let device = AVCaptureDevice.default(for: .audio) else { return false }
+        do {
+            _ = try AVCaptureDeviceInput(device: device)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// キャッシュされた状態と実際に開けるかの両方を見る。
+    /// どちらかが「使える」と言えば使えると判断する。
+    public static var isMicrophoneUsable: Bool {
+        if microphoneStatus == .authorized { return true }
+        return canOpenMicrophone()
+    }
+
     public static func requestMicrophone() async -> Bool {
         await AVCaptureDevice.requestAccess(for: .audio)
     }
 
     public static func missingPermissions() -> [SessionError.Permission] {
         var missing: [SessionError.Permission] = []
-        if microphoneStatus != .authorized { missing.append(.microphone) }
+        if !isMicrophoneUsable { missing.append(.microphone) }
         if !isAccessibilityTrusted { missing.append(.accessibility) }
         return missing
     }
@@ -67,8 +94,8 @@ public enum Permissions {
     /// 未決定ならダイアログが出るので、**そこで設定も同時に開いてはいけない**
     /// （ダイアログの上に設定画面が被さって何が起きたか分からなくなる）。
     public static func requestMicrophoneIfPossible() async -> MicrophoneRequestOutcome {
+        if isMicrophoneUsable { return .granted }
         switch microphoneStatus {
-        case .authorized: return .granted
         case .notDetermined:
             return await requestMicrophone() ? .granted : .promptShown
         default:

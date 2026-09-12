@@ -135,10 +135,14 @@ public final class AppModel {
     /// **実際に event tap を作れたかどうか**で判定すれば、その問題を回避できる。
     public func refreshPermissions() {
         var missing: [SessionError.Permission] = []
-        if Permissions.microphoneStatus != .authorized { missing.append(.microphone) }
+        if !Permissions.isMicrophoneUsable { missing.append(.microphone) }
         if !startHotkeyIfPossible() { missing.append(.accessibility) }
         if missing != missingPermissions {
-            Log.session.info("権限状態が変化: 不足 \(missing.count, privacy: .public) 件")
+            // キャッシュされた値と機能判定がずれていないかも記録しておく。
+            // ずれていれば「システム設定で許可したが再起動していない」状態。
+            Log.session.info("""
+                権限: 不足 \(missing.count, privacy: .public) 件                 mic(status=\(Permissions.microphoneStatus.rawValue, privacy: .public)                 open=\(Permissions.canOpenMicrophone(), privacy: .public))                 ax(tap=\(self.hotkey != nil, privacy: .public))
+                """)
             missingPermissions = missing
         }
     }

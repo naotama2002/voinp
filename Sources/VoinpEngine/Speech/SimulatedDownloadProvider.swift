@@ -40,15 +40,16 @@ public struct SimulatedDownloadProvider: TranscriptionProvider {
                               progress: @Sendable @escaping (Double) -> Void) async throws {
         if mode == "slow" {
             // 本物の Speech 資産と同じ挙動: 進捗を一切返さないまま完了する。
-            // UI が不定表示に切り替わるかを確認できる。
-            for _ in 0..<12 {
+            // 不定表示と経過秒数が意図どおり出るかを確認できる。
+            // 実機の体感に近づけるため 25 秒かける。
+            for _ in 0..<50 {
                 progress(0)
                 try await Task.sleep(for: .milliseconds(500))
             }
         } else {
             for step in 0...20 {
                 progress(Double(step) / 20)
-                try await Task.sleep(for: .milliseconds(400))
+                try await Task.sleep(for: .milliseconds(500))
             }
         }
         Self.installed.markInstalled()

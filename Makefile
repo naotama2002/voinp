@@ -14,7 +14,7 @@ ENTITLEMENTS  := Resources/voinp.entitlements
 SIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning \
                    | awk '/Developer ID Application|Apple Development/ {print $$2; exit}')
 
-.PHONY: build bundle sign verify install run run-unattached run-sim run-sim-slow use-en use-ja launch logs logs-recent test clean reset-permissions help download-model
+.PHONY: build bundle sign verify install run run-unattached run-sim run-sim-slow use-en use-ja use-locale locales launch logs logs-recent test clean reset-permissions help download-model
 
 help:
 	@echo "make test      テストを実行"
@@ -25,6 +25,7 @@ help:
 	@echo "make run-sim-slow  同上（進捗を返さない実機同等の挙動）"
 	@echo "make use-en    認識を en-GB に切替（未取得なので本物の DL が走る）"
 	@echo "make use-ja    ja-JP に戻す"
+	@echo "make use-locale LOCALE=zh-TW  任意のロケールへ（未取得なら本物の DL）"
 	@echo "make verify    署名・依存・プライバシー保証の検証"
 	@echo "make download-model  日本語認識モデルを取得（初回のみ）"
 	@echo "make reset-permissions  TCC の許可をリセット"
@@ -114,6 +115,20 @@ run-sim-slow: install
 # 注意: CONFIG はビルド構成 (debug/release) で既に使っている。別名にすること。
 VOINP_CONFIG_DIR  := $(HOME)/Library/Application Support/voinp
 VOINP_CONFIG_FILE := $(VOINP_CONFIG_DIR)/config.json
+
+# 任意のロケールに切り替える。未取得のものを指定すれば本物の DL が走る。
+#   make use-locale LOCALE=zh-TW
+# 注意: 取得したモデルは削除できず、同時に扱えるのは 5 ロケールまで。
+use-locale:
+	@test -n "$(LOCALE)" || (echo "使い方: make use-locale LOCALE=zh-TW"; exit 1)
+	@mkdir -p "$(VOINP_CONFIG_DIR)"
+	@printf '{\n  "schemaVersion": 1,\n  "transcription": { "locale": "$(LOCALE)" }\n}\n' > "$(VOINP_CONFIG_FILE)"
+	@echo "認識ロケールを $(LOCALE) にしました。戻すには make use-ja"
+
+# 未取得のロケールを一覧する（取得はしない）
+locales:
+	@swift build --product voinp-tools >/dev/null 2>&1
+	@echo "現在の設定: $$(grep -o '"locale"[^,}]*' "$(VOINP_CONFIG_FILE)" 2>/dev/null || echo '(既定 ja-JP)')"
 
 use-en:
 	@mkdir -p "$(VOINP_CONFIG_DIR)"

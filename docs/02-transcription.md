@@ -427,6 +427,55 @@ SpeechAnalyzer.Options(priority: .userInitiated, modelRetention: .processLifetim
 合わせて **アプリ起動時に** `analyzer.prepareToAnalyze(in: format)` を呼ぶ。
 ホットキー押下時ではなく起動時。
 
+## 言語の自動判定はできない（エンジンの能力であってアプリの実装ではない）
+
+**Apple の `SpeechAnalyzer` に言語自動判定はない。**
+
+- `DictationTranscriber(locale:)` は**単一ロケール固定**。`selectedLocales` は読み取り専用
+- `Speech.framework` に `languageIdentification` 等の API は存在しない
+  （swiftinterface 全文検索でゼロ）
+- `SpeechModule` は `DictationTranscriber` / `SpeechTranscriber` / `SpeechDetector` の 3 つだけで、
+  `SpeechDetector` は発話区間の検出であって言語判定ではない
+
+したがって `transcription.locale` の決め打ちになる。
+日本語設定のまま英語を話せば、日本語として当てはめられる。
+
+### TypeWhisper に「自動」があるのはなぜか
+
+調べた結果、**アプリの独自実装ではなくエンジン側の機能**だった。
+
+```swift
+// WhisperKitPlugin.swift:423
+detectLanguage: language == nil,
+```
+
+Whisper はモデル自体に言語判定トークンを持つので、WhisperKit を選んだときだけ
+「自動」が機能する。同じアプリの `SpeechAnalyzerPlugin` は
+
+```swift
+detectedLanguage: locale.language.languageCode?.identifier
+```
+
+と、**設定値をそのまま返しているだけ**で判定していない。
+Speechmatics プラグインにも「言語判定はバッチ専用機能」というコメントがある。
+
+| エンジン | 自動判定 |
+|---|---|
+| Whisper 系 (WhisperKit / OpenAI API) | できる（モデルの能力） |
+| Apple `SpeechAnalyzer` | **できない** |
+| Speechmatics | バッチのみ |
+
+**自動判定は選んだエンジンの能力に依存する。** UI に「自動」を出すかどうかは
+プロバイダごとの能力で決めるべきで、step 2 で複数エンジンを持つときは
+`ProviderDescriptor` に `supportsLanguageDetection` を持たせ、
+対応するエンジンを選んだときだけ選択肢に出す。
+
+### いまの方針
+
+step 1 は **ja-JP 固定**。複数言語を使い分けたくなったら、
+ホットキーを言語ごとに割り当てるのが現実的
+（話す前にどちらか決まっているので、自動判定より確実で速い）。
+
 ## ダウンロード待ち UI をどう確認するか
 
 **本物の音声モデルは削除できない。**

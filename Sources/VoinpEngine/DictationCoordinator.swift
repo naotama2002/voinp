@@ -65,7 +65,8 @@ public actor DictationCoordinator {
         let before = machine.phase
         let actions = machine.handle(event, at: .now)
         if machine.phase != before {
-            Log.session.info("phase \(String(describing: before), privacy: .public) -> \(String(describing: self.machine.phase), privacy: .public)")
+            // logDescription は本文を含まない。String(describing:) を使ってはいけない。
+            Log.session.info("phase \(before.logDescription, privacy: .public) -> \(self.machine.phase.logDescription, privacy: .public)")
         }
         updateContinuation.yield(.phase(machine.phase))
         for action in actions { await perform(action) }

@@ -43,3 +43,41 @@ public enum InsertionOutcome: Equatable, Sendable {
 public enum Feedback: Equatable, Sendable {
     case start, stop, cancel, error
 }
+
+extension SessionPhase {
+    /// ログに出してよい表現。**本文を絶対に含まない。**
+    ///
+    /// `String(describing:)` は associated value をそのまま展開するため、
+    /// `.listening` や `.awaitingModifierRelease(text:)` を素で補間すると
+    /// 発話内容が unified log に載り、任意の管理ツールから読めてしまう。
+    /// `os.log` の既定は `.public` なので、これは現実的な漏洩経路である。
+    public var logDescription: String {
+        switch self {
+        case .idle: "idle"
+        case .installingModel(let p): "installingModel(\(Int(p * 100))%)"
+        case .arming: "arming"
+        case .listening(let s): "listening(\(s.fullText.count)文字)"
+        case .finalizing: "finalizing"
+        case .refining: "refining"
+        case .awaitingModifierRelease(let t): "awaitingModifierRelease(\(t.count)文字)"
+        case .inserting: "inserting"
+        case .failed(let e): "failed(\(e.logDescription))"
+        }
+    }
+}
+
+extension SessionError {
+    /// ログ用。理由だけを出し、本文は含まない。
+    public var logDescription: String {
+        switch self {
+        case .secureInputActive: "secureInputActive"
+        case .permissionMissing(let p): "permissionMissing(\(p))"
+        case .audioUnavailable(let e): "audioUnavailable(\(e))"
+        case .transcriptionFailed(let e): "transcriptionFailed(\(e))"
+        case .tooShort: "tooShort"
+        case .insertionFailed(let e): "insertionFailed(\(e))"
+        case .modifiersStuck: "modifiersStuck"
+        case .misconfigured: "misconfigured"
+        }
+    }
+}

@@ -39,7 +39,17 @@ if [ -f "$BIN" ]; then
   fi
 fi
 
-echo "== 5. 想定外の文字体系の混入がないこと =="
+echo "== 5. ログにユーザーテキストが漏れないこと =="
+# os.log の既定は .public。SessionPhase / TranscriptSnapshot / 本文そのものを
+# String(describing:) で補間すると、発話内容が unified log に載る。
+# （実際に一度やらかした。logDescription を使うこと）
+leaks=$(grep -rn --include='*.swift' 'privacy: *\.public' Sources/ \
+        | grep -E 'String\(describing: *(phase|.*[Pp]hase|.*snapshot|.*[Tt]ext)' || true)
+leaks="$leaks$(grep -rnE --include='*\.swift' 'Log\.[a-z]+\.[a-z]+\("[^"]*\\\((text|transcript|committed|volatileTail|snapshot)[,)]' Sources/ || true)"
+if [ -z "$(echo "$leaks" | tr -d '[:space:]')" ]; then ok "本文の .public 補間なし"
+else bad "ログに本文が漏れる可能性:"; echo "$leaks" | sed 's/^/       /'; fi
+
+echo "== 6. 想定外の文字体系の混入がないこと =="
 # 日本語ドキュメントにキリル / ハングル / タイ文字が紛れ込む事故を検出する。
 # （生成時のタイプミスで実際に 3 回発生した）
 strays=$(python3 - <<'PYEOF'

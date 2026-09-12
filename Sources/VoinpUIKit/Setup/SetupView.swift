@@ -171,8 +171,23 @@ public struct SetupView: View {
                     .foregroundStyle(.orange).font(.system(size: 13))
             default:
                 if model.isDownloadingModel {
-                    ProgressView(value: model.modelProgress ?? 0) {
-                        Text("取得中…").font(.system(size: 12))
+                    VStack(alignment: .leading, spacing: 6) {
+                        if model.hasMeaningfulProgress {
+                            ProgressView(value: model.modelProgress ?? 0) {
+                                Text("取得中… \(Int((model.modelProgress ?? 0) * 100))%")
+                                    .font(.system(size: 12))
+                            }
+                        } else {
+                            // Speech の資産ダウンロードは進捗を返さないことがある
+                            // （実測で fractionCompleted が 0.0 のまま完了した）。
+                            // 0% のバーを出すと固まったように見えるので不定表示にする。
+                            ProgressView {
+                                Text("取得中…").font(.system(size: 12))
+                            }
+                            .progressViewStyle(.linear)
+                        }
+                        Text("ネットワーク環境によっては数分かかることがあります。")
+                            .font(.system(size: 11)).foregroundStyle(.tertiary)
                     }
                     .frame(maxWidth: 320)
                 } else {

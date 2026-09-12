@@ -427,6 +427,54 @@ SpeechAnalyzer.Options(priority: .userInitiated, modelRetention: .processLifetim
 合わせて **アプリ起動時に** `analyzer.prepareToAnalyze(in: format)` を呼ぶ。
 ホットキー押下時ではなく起動時。
 
+## ダウンロード待ち UI をどう確認するか
+
+**本物の音声モデルは削除できない。**
+`Speech.framework` にアンインストール API はなく（`AssetInventory` は
+`reserve` / `release` / `status` のみ）、実体は SIP 保護下の
+`/System/Library/AssetsV2/com_apple_MobileAsset_UAF_Speech_AutomaticSpeechRecognition`
+（実測 721 MB）にあり、**macOS 標準のディクテーションと Siri が共用**している。
+
+つまり「未取得の状態」を手元で再現できないので、
+取得中の UI が正しく動くかを確かめる手段が要る。
+`TranscriptionProvider` の接合部に差し替え実装を挿すのがこれにあたる
+（接合部を作った実利の 1 つ）。
+
+```sh
+make run-sim        # 0→100% の進捗を返す
+make run-sim-slow   # 進捗を返さない（本物と同じ挙動）
+```
+
+### 勘所: 本物のダウンロードは進捗を返さない
+
+実測すると `AssetInstallationRequest.progress` は
+**`fractionCompleted` が 0.0 のまま完了する**（`completedUnitCount = 0/1`）。
+
+```
+… 5s progress=0.0 completed=0/1
+完了
+```
+
+素直に `ProgressView(value:)` を出すと **0% で固まったように見えてから一気に終わる**。
+進捗が一度でも 0 を超えたときだけ確定バーを出し、そうでなければ不定表示にする。
+`make run-sim-slow` はこの経路を再現する。
+
+### 勘所: 予約はプロセスごと
+
+`AssetInventory` の予約は**プロセス単位**で、新しいプロセスは必ず
+`reservedLocales = []` から始まる。
+**未予約のロケールは、資産がディスク上にあっても `status` が `.supported`
+（未インストール）と報告される。**
+
+```
+reserve(ja-JP) → true
+status: installed     ← 予約した瞬間に変わる
+```
+
+予約せずに `status` を見ると**起動のたびに「モデル未取得」と誤判定**し、
+セットアップが毎回ダウンロードを促すことになる（実際にそうなっていた）。
+`readiness()` の中で `status` を見る前に予約すること。予約は冪等で、同時 5 ロケールまで。
+
 ## step 2: クラウド STT を載せる
 
 プロトコルは変更不要。クラウドプロバイダは:

@@ -16,6 +16,11 @@ public final class AppModel {
     public private(set) var lastError: String?
     public private(set) var modelReadiness: Readiness?
     public private(set) var isDownloadingModel = false
+    /// 進捗が一度でも 0 を超えたか。
+    /// Speech の資産ダウンロードは fractionCompleted を返さないことがあり
+    /// （実測で 0.0 のまま completed=0/1）、0% のバーが固まって見える。
+    /// その場合は不定表示に切り替える。
+    public private(set) var hasMeaningfulProgress = false
 
     public var settings: Settings
     let dependencies: Dependencies
@@ -39,7 +44,7 @@ public final class AppModel {
 
         let coord = DictationCoordinator(
             settings: settings,
-            provider: AppleSpeechProvider(),
+            provider: dependencies.speechProvider,
             inserter: PasteInserter(
                 pasteboard: SystemPasteboard(),
                 restoreDelayMs: settings.insertion.pasteRestoreDelayMs,
@@ -125,19 +130,24 @@ public final class AppModel {
     public func refreshModelReadiness() async {
         let request = TranscriptionRequest(
             locale: Locale(identifier: settings.transcription.locale))
-        modelReadiness = await AppleSpeechProvider().readiness(for: request)
+        modelReadiness = await dependencies.speechProvider.readiness(for: request)
     }
 
     public func downloadModel() async {
         guard !isDownloadingModel else { return }
         isDownloadingModel = true
         modelProgress = 0
+        hasMeaningfulProgress = false
         defer { isDownloadingModel = false }
         do {
-            try await AppleSpeechProvider().downloadModel(
+            try await dependencies.speechProvider.downloadModel(
                 for: Locale(identifier: settings.transcription.locale)
             ) { [weak self] p in
-                Task { @MainActor in self?.modelProgress = p }
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.modelProgress = p
+                    if p > 0 && p < 1 { self.hasMeaningfulProgress = true }
+                }
             }
         } catch {
             lastError = "モデルを取得できませんでした"

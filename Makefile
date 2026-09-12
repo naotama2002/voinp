@@ -14,13 +14,15 @@ ENTITLEMENTS  := Resources/voinp.entitlements
 SIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning \
                    | awk '/Developer ID Application|Apple Development/ {print $$2; exit}')
 
-.PHONY: build bundle sign verify install run run-unattached launch logs logs-recent test clean reset-permissions help download-model
+.PHONY: build bundle sign verify install run run-unattached run-sim run-sim-slow launch logs logs-recent test clean reset-permissions help download-model
 
 help:
 	@echo "make test      テストを実行"
 	@echo "make install   ビルド→署名→~/Applications へ配置"
 	@echo "make run       install して起動（LaunchServices 経由。TCC の許可が Voinp に付く）"
 	@echo "make logs      ログを追う"
+	@echo "make run-sim   ダウンロード待ち UI を確認（進捗あり）"
+	@echo "make run-sim-slow  同上（進捗を返さない実機同等の挙動）"
 	@echo "make verify    署名・依存・プライバシー保証の検証"
 	@echo "make download-model  日本語認識モデルを取得（初回のみ）"
 	@echo "make reset-permissions  TCC の許可をリセット"
@@ -88,6 +90,21 @@ run: install
 run-unattached: install
 	@echo "警告: TCC の責任プロセスがターミナルになります。権限は Voinp に付きません。"
 	$(INSTALLDIR)/Contents/MacOS/voinp
+
+# ダウンロード待ち UI の確認。
+# 本物の音声モデルは SIP 保護下で削除できないため「未取得の状態」を再現できない。
+# TranscriptionProvider の接合部に差し替え実装を挿して、取得中の挙動だけを再現する。
+#   run-sim       0→100% の進捗を返す
+#   run-sim-slow  進捗を返さない（本物の Speech 資産と同じ挙動。不定表示になる）
+run-sim: install
+	@defaults delete $(BUNDLE_ID) onboardingCompleted 2>/dev/null || true
+	open -n --env VOINP_SIMULATE_DOWNLOAD=1 $(INSTALLDIR)
+	@echo "セットアップを開き「音声モデル」まで進んでください。"
+
+run-sim-slow: install
+	@defaults delete $(BUNDLE_ID) onboardingCompleted 2>/dev/null || true
+	open -n --env VOINP_SIMULATE_DOWNLOAD=slow $(INSTALLDIR)
+	@echo "セットアップを開き「音声モデル」まで進んでください（不定表示になります）。"
 
 logs:
 	log stream --predicate 'subsystem == "$(BUNDLE_ID)"' --level info --style compact

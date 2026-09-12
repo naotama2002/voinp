@@ -9,10 +9,14 @@ import VoinpCore
 /// **アクセシビリティ権限を得る前に行えなければならない**（local monitor なら権限不要）。
 struct KeyRecorderView: View {
     @Binding var binding: String
+    /// 記録の開始・終了を知らせる。既存ホットキーの一時停止に使う。
+    var onRecordingChanged: (Bool) -> Void = { _ in }
     @State private var isRecording = false
     @State private var monitor: Any?
     /// 押されている修飾キーの最大集合。修飾キー単独の和音を確定するのに使う。
     @State private var peak: Modifiers = []
+    /// いま実際に押されている修飾キー。すべて離れた時点で確定する。
+    @State private var held: Modifiers = []
     @State private var error: String?
 
     var body: some View {
@@ -37,6 +41,8 @@ struct KeyRecorderView: View {
                 Text(error).font(.system(size: 10)).foregroundStyle(.orange)
             }
         }
+        // 記録中にウィンドウを閉じる / タブを移ると、
+        // ホットキーが止まったままになる。必ず戻す。
         .onDisappear { stop() }
     }
 
@@ -47,16 +53,25 @@ struct KeyRecorderView: View {
     private func start() {
         error = nil
         peak = []
+        held = []
         isRecording = true
+        // 記録中は既存のホットキーを止める。
+        // 止めないと、設定しようとしたキーで録音が始まってしまう。
+        onRecordingChanged(true)
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             handle(event) ? nil : event    // 記録中はアプリにイベントを渡さない
         }
     }
 
     private func stop() {
+        guard isRecording else { return }
         isRecording = false
+        peak = []
+        held = []
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        // 記録を終えたら（確定・中止どちらでも）ホットキーを元に戻す。
+        onRecordingChanged(false)
     }
 
     private func handle(_ event: NSEvent) -> Bool {
@@ -75,11 +90,21 @@ struct KeyRecorderView: View {
             // **左右の判別は keyCode で行う。**
             // NSEvent.ModifierFlags は左右を区別しないため、
             // フラグだけ見ると右 Shift が左として記録される。
-            if event.modifierFlags.isEmpty {
-                // すべて離された。非修飾キーが来ていなければ修飾キー単独の和音として確定。
-                if !peak.isEmpty { commit(KeyCombo(keyCode: nil, modifiers: peak)) }
-            } else if let pressed = Modifiers.fromModifierKeyCode(event.keyCode) {
-                peak.formUnion(pressed)
+            guard let key = Modifiers.fromModifierKeyCode(event.keyCode) else { return true }
+
+            // **押下/解放は自分で追跡する。**
+            // modifierFlags.isEmpty で「すべて離された」を判定していたが、
+            // fn などは離してもフラグが残ることがあり、確定に至らなかった。
+            // そのキーのフラグが立っているかで押下か解放かを判断する。
+            if isPressed(key, in: event.modifierFlags) {
+                peak.formUnion(key)
+                held.formUnion(key)
+            } else {
+                held.subtract(key)
+                // すべて離れたら、修飾キー単独の和音として確定する。
+                if held.isEmpty, !peak.isEmpty {
+                    commit(KeyCombo(keyCode: nil, modifiers: peak))
+                }
             }
             return true
 
@@ -88,14 +113,36 @@ struct KeyRecorderView: View {
         }
     }
 
-    private func commit(_ combo: KeyCombo) {
-        guard let reason = Self.rejection(for: combo) else {
-            binding = combo.stringValue
-            stop()
+    private func commit(_ raw: KeyCombo) {
+        // **非修飾キーとの組み合わせでは左右を固定しない。**
+        // 「⌃⌥Space」を登録した人は、右の ⌃⌥ でも動くことを期待する。
+        // 左右の区別が意味を持つのは「右 ⌘ 長押し」のような
+        // 修飾キー単独の和音だけなので、そのときだけ側を保つ。
+        let combo = raw.isModifierOnly
+            ? raw
+            : KeyCombo(keyCode: raw.keyCode,
+                       modifiers: raw.modifiers.sideAgnostic,
+                       requiresDoubleTap: raw.requiresDoubleTap)
+
+        if let reason = Self.rejection(for: combo) {
+            error = reason
+            peak = []
+            held = []
             return
         }
-        error = reason
-        peak = []
+        binding = combo.stringValue
+        stop()
+    }
+
+    /// そのキーがいま押されているか。
+    /// `flagsChanged` は押下と解放の両方で飛んでくるので、フラグで区別する。
+    private func isPressed(_ key: Modifiers, in flags: NSEvent.ModifierFlags) -> Bool {
+        if !key.isDisjoint(with: .control) { return flags.contains(.control) }
+        if !key.isDisjoint(with: .shift)   { return flags.contains(.shift) }
+        if !key.isDisjoint(with: .option)  { return flags.contains(.option) }
+        if !key.isDisjoint(with: .command) { return flags.contains(.command) }
+        if key.contains(.function)         { return flags.contains(.function) }
+        return false
     }
 
     /// 使わせてはいけない組み合わせ。

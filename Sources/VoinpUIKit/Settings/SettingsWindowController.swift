@@ -45,6 +45,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             guard isOpen else { return }
             isOpen = false
             policy.windowDidClose()
+            // 記録中に閉じられてもホットキーが止まったままにならないよう、
+            // 念のため再開を試みる（既に動いていれば何もしない）。
+            model.setHotkeyRecording(false)
         }
     }
 }

@@ -220,3 +220,22 @@ struct HotkeyFalsePositiveTests {
         #expect(d2.command == nil)
     }
 }
+
+@Suite("KeyCombo — 左右の扱い")
+struct KeyComboSideTests {
+
+    @Test("非修飾キーとの組み合わせは左右を問わない")
+    func letterComboIgnoresSide() {
+        // ⌃⌥Space を左側で登録したとして、右側の ⌃⌥ でも一致すべき
+        let registered = KeyCombo(keyCode: 0x31, modifiers: Modifiers.control.union(.option))
+        let pressedRight: Modifiers = [.rightControl, .rightOption]
+        #expect(pressedRight.sideAgnostic.contains(registered.modifiers.sideAgnostic))
+    }
+
+    @Test("修飾キー単独では左右を区別する")
+    func modifierOnlyKeepsSide() {
+        let right = KeyCombo(keyCode: nil, modifiers: [.rightCommand])
+        #expect(right.modifiers.contains(.rightCommand))
+        #expect(!right.modifiers.contains(.leftCommand), "左 ⌘ で発動してはいけない")
+    }
+}

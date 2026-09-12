@@ -319,6 +319,21 @@ public final class AppModel {
         if localeChanged { Task { await refreshModelReadiness() } }
     }
 
+    /// ホットキーの記録中は既存のホットキーを止める。
+    ///
+    /// 止めないと、設定しようとしたキーを押した瞬間に録音が始まる。
+    /// 記録が終われば（確定・中止どちらでも）張り直す。
+    public func setHotkeyRecording(_ recording: Bool) {
+        if recording {
+            Log.hotkey.info("記録中: ホットキーを一時停止")
+            hotkey?.stop()
+            hotkey = nil
+        } else {
+            Log.hotkey.info("記録終了: ホットキーを再開")
+            startHotkeyIfPossible()
+        }
+    }
+
     /// ホットキーの設定が変わったら張り直す。
     private func restartHotkey() {
         hotkey?.stop()

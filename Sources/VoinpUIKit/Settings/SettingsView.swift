@@ -28,9 +28,11 @@ private struct GeneralSettings: View {
     var body: some View {
         Form {
             Section("ホットキー") {
-                KeyRecorderView(binding: Binding(
-                    get: { model.settings.hotkey.binding },
-                    set: { v in model.update { $0.hotkey.binding = v } }))
+                KeyRecorderView(
+                    binding: Binding(
+                        get: { model.settings.hotkey.binding },
+                        set: { v in model.update { $0.hotkey.binding = v } }),
+                    onRecordingChanged: { model.setHotkeyRecording($0) })
 
                 Picker("押し方", selection: Binding(
                     get: { model.settings.hotkey.behavior },

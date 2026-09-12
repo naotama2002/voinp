@@ -5,9 +5,9 @@ import VoinpEngine
 
 /// アプリのエントリポイント。実行ターゲットの main.swift から呼ぶ。
 public enum VoinpRoot {
-    /// `App` の `init()` は引数を取れないため、合成ルートから渡された依存を
-    /// ここで受け渡す。`run` は main actor 上で 1 度しか呼ばれない。
+    /// `App` の `init()` は引数を取れないため、合成ルートから渡された依存をここで受け渡す。
     @MainActor static var dependencies = Dependencies.base()
+    @MainActor static var model: AppModel?
 
     @MainActor
     public static func run(_ deps: Dependencies) {
@@ -16,19 +16,28 @@ public enum VoinpRoot {
     }
 }
 
+/// 起動処理は `applicationDidFinishLaunching` で行う。
+///
+/// `MenuBarExtra` のラベルに付けた `onAppear` は発火が保証されず、
+/// 実際に一度も呼ばれずコーディネータもホットキーも起動しなかった。
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            NSApp.setActivationPolicy(.accessory)
+            Log.session.info("applicationDidFinishLaunching")
+            VoinpRoot.model?.start()
+        }
+    }
+}
+
 struct VoinpApp: App {
-    @State private var model = AppModel(dependencies: VoinpRoot.dependencies)
-    @State private var didStart = false
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    @State private var model: AppModel
 
     init() {
-        // LSUIElement が既に含意するが、素のバイナリを直接起動する開発時に効く。
-        NSApplication.shared.setActivationPolicy(.accessory)
-    }
-
-    private func bootstrap() {
-        guard !didStart else { return }
-        didStart = true
-        model.start()
+        let m = AppModel(dependencies: VoinpRoot.dependencies)
+        _model = State(initialValue: m)
+        VoinpRoot.model = m
     }
 
     var body: some Scene {
@@ -36,9 +45,7 @@ struct VoinpApp: App {
             MenuBarContent(model: model)
         } label: {
             Image(systemName: model.menuBarSymbol)
-                .onAppear { bootstrap() }
         }
         .menuBarExtraStyle(.menu)
     }
 }
-

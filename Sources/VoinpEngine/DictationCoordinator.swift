@@ -62,7 +62,11 @@ public actor DictationCoordinator {
     // MARK: - 状態機械の駆動
 
     private func dispatch(_ event: SessionEvent) async {
+        let before = machine.phase
         let actions = machine.handle(event, at: .now)
+        if machine.phase != before {
+            Log.session.info("phase \(String(describing: before), privacy: .public) -> \(String(describing: self.machine.phase), privacy: .public)")
+        }
         updateContinuation.yield(.phase(machine.phase))
         for action in actions { await perform(action) }
     }
@@ -170,6 +174,7 @@ public actor DictationCoordinator {
             }
             await dispatch(.audioStarted)
         } catch {
+            Log.audio.error("録音を開始できません: \(String(describing: error), privacy: .public)")
             await dispatch(.failed(.audioUnavailable(.microphoneNotGranted)))
         }
     }

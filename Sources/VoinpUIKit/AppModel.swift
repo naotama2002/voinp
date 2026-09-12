@@ -49,6 +49,7 @@ public final class AppModel {
             for await update in coord.updates { self?.apply(update) }
         })
 
+        Log.session.info("起動: 権限不足 \(self.missingPermissions.count, privacy: .public) 件")
         startHotkeyIfPossible()
 
         // AXIsProcessTrusted はプロセスごとに初回問い合わせ時点でキャッシュされる。

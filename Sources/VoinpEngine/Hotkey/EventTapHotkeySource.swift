@@ -59,6 +59,7 @@ public final class EventTapHotkeySource: @unchecked Sendable {
 
     public func start() throws {
         guard Permissions.isAccessibilityTrusted else {
+            Log.hotkey.error("アクセシビリティ未許可のため tap を作成できません")
             throw VoinpError.accessibilityNotGranted
         }
         guard thread == nil else { return }
@@ -102,6 +103,7 @@ public final class EventTapHotkeySource: @unchecked Sendable {
             userInfo: refcon
         ) else { return }
 
+        Log.hotkey.info("event tap を開始")
         tap = machPort
         let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, machPort, 0)
         runLoopSource = src
@@ -118,6 +120,7 @@ public final class EventTapHotkeySource: @unchecked Sendable {
         // システムはコールバックが遅いとき、または特定の入力でタップを無効化する。
         // ここで再武装しないと、一度詰まっただけでホットキーが永久に死ぬ。
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            Log.hotkey.notice("tap が無効化された。再武装する")
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return Unmanaged.passUnretained(event)
         }

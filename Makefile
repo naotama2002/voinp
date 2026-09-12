@@ -14,12 +14,13 @@ ENTITLEMENTS  := Resources/voinp.entitlements
 SIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning \
                    | awk '/Developer ID Application|Apple Development/ {print $$2; exit}')
 
-.PHONY: build bundle sign verify install run launch test clean reset-permissions help download-model
+.PHONY: build bundle sign verify install run run-unattached launch logs logs-recent test clean reset-permissions help download-model
 
 help:
 	@echo "make test      テストを実行"
 	@echo "make install   ビルド→署名→~/Applications へ配置"
-	@echo "make run       install して起動（ログが端末に出る）"
+	@echo "make run       install して起動（LaunchServices 経由。TCC の許可が Voinp に付く）"
+	@echo "make logs      ログを追う"
 	@echo "make verify    署名・依存・プライバシー保証の検証"
 	@echo "make download-model  日本語認識モデルを取得（初回のみ）"
 	@echo "make reset-permissions  TCC の許可をリセット"
@@ -71,13 +72,28 @@ install: sign
 	ditto $(APPDIR) $(INSTALLDIR)
 	@echo "installed: $(INSTALLDIR)"
 
-# バイナリを直接起動するので stdout/stderr が端末に出る。
-# TCC は実行ファイルのパスから .app を辿るため、権限は通常どおり効く。
+# LaunchServices 経由で起動する。
+#
+# **バイナリを直接起動してはいけない。** そうするとプロセスはシェルの子になり、
+# TCC は「責任プロセス」をターミナルアプリ（Ghostty / Terminal.app など）と判定する。
+# その状態でアクセシビリティを要求すると、許可されるのは Voinp ではなく
+# ターミナルのほうになり、Voinp はいつまでも権限を得られない。
+#
+# stdout は見えなくなるので、ログは unified log から拾う（make logs）。
 run: install
+	open -n $(INSTALLDIR)
+	@echo "起動しました。ログは 'make logs' で確認できます。"
+
+# 直接起動。TCC の権限は効かないので、権限を要さない部分のデバッグ専用。
+run-unattached: install
+	@echo "警告: TCC の責任プロセスがターミナルになります。権限は Voinp に付きません。"
 	$(INSTALLDIR)/Contents/MacOS/voinp
 
-launch: install
-	open -n $(INSTALLDIR)
+logs:
+	log stream --predicate 'subsystem == "$(BUNDLE_ID)"' --level info --style compact
+
+logs-recent:
+	log show --predicate 'subsystem == "$(BUNDLE_ID)"' --last 10m --style compact
 
 reset-permissions:
 	tccutil reset Accessibility $(BUNDLE_ID) || true

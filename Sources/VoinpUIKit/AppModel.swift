@@ -170,9 +170,11 @@ public final class AppModel {
     // MARK: - 音声モデル
 
     public func refreshModelReadiness() async {
-        let request = TranscriptionRequest(
-            locale: Locale(identifier: settings.transcription.locale))
-        modelReadiness = await dependencies.speechProvider.readiness(for: request)
+        let id = settings.transcription.locale
+        let request = TranscriptionRequest(locale: Locale(identifier: id))
+        let r = await dependencies.speechProvider.readiness(for: request)
+        Log.speech.info("モデル状態: locale=\(id, privacy: .public) readiness=\(String(describing: r), privacy: .public)")
+        modelReadiness = r
     }
 
     public func downloadModel() async {

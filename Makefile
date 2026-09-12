@@ -14,7 +14,7 @@ ENTITLEMENTS  := Resources/voinp.entitlements
 SIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning \
                    | awk '/Developer ID Application|Apple Development/ {print $$2; exit}')
 
-.PHONY: build bundle sign verify install run run-unattached run-sim run-sim-slow launch logs logs-recent test clean reset-permissions help download-model
+.PHONY: build bundle sign verify install run run-unattached run-sim run-sim-slow use-en use-ja launch logs logs-recent test clean reset-permissions help download-model
 
 help:
 	@echo "make test      テストを実行"
@@ -23,6 +23,8 @@ help:
 	@echo "make logs      ログを追う"
 	@echo "make run-sim   ダウンロード待ち UI を確認（進捗あり）"
 	@echo "make run-sim-slow  同上（進捗を返さない実機同等の挙動）"
+	@echo "make use-en    認識を en-GB に切替（未取得なので本物の DL が走る）"
+	@echo "make use-ja    ja-JP に戻す"
 	@echo "make verify    署名・依存・プライバシー保証の検証"
 	@echo "make download-model  日本語認識モデルを取得（初回のみ）"
 	@echo "make reset-permissions  TCC の許可をリセット"
@@ -105,6 +107,24 @@ run-sim-slow: install
 	@defaults delete $(BUNDLE_ID) onboardingCompleted 2>/dev/null || true
 	open -n --env VOINP_SIMULATE_DOWNLOAD=slow $(INSTALLDIR)
 	@echo "セットアップを開き「音声モデル」まで進んでください（不定表示になります）。"
+
+# 本物のモデルダウンロード UI を見るための切り替え。
+# en-US は取得済みなので en-GB を使う（未取得かつ英語なので、取得後そのまま試せる）。
+# 注意: 取得したモデルは SIP 保護下にあり削除できない。
+# 注意: CONFIG はビルド構成 (debug/release) で既に使っている。別名にすること。
+VOINP_CONFIG_DIR  := $(HOME)/Library/Application Support/voinp
+VOINP_CONFIG_FILE := $(VOINP_CONFIG_DIR)/config.json
+
+use-en:
+	@mkdir -p "$(VOINP_CONFIG_DIR)"
+	@printf '{\n  "schemaVersion": 1,\n  "transcription": { "locale": "en-GB" }\n}\n' > "$(VOINP_CONFIG_FILE)"
+	@echo "認識ロケールを en-GB にしました（未取得なのでウィザードでダウンロードが走ります）"
+	@echo "戻すには: make use-ja"
+
+use-ja:
+	@mkdir -p "$(VOINP_CONFIG_DIR)"
+	@printf '{\n  "schemaVersion": 1,\n  "transcription": { "locale": "ja-JP" }\n}\n' > "$(VOINP_CONFIG_FILE)"
+	@echo "認識ロケールを ja-JP に戻しました"
 
 logs:
 	log stream --predicate 'subsystem == "$(BUNDLE_ID)"' --level info --style compact

@@ -1,4 +1,6 @@
 import AppKit
+import ApplicationServices
+import CoreGraphics
 import Foundation
 import Observation
 import VoinpCore
@@ -57,6 +59,7 @@ public final class AppModel {
         })
 
         refreshPermissions()
+        Log.session.info("起動時の権限: mic(status=\(Permissions.microphoneStatus.rawValue, privacy: .public)) ax(tap=\(self.hotkey != nil, privacy: .public),preflight=\(CGPreflightPostEventAccess(), privacy: .public),trusted=\(AXIsProcessTrusted(), privacy: .public))")
         Task { await refreshModelReadiness() }
 
         // 権限はポーリングしない。
@@ -144,7 +147,9 @@ public final class AppModel {
             // ずれていれば「システム設定で許可したが再起動していない」状態。
             let micStatus = Permissions.microphoneStatus.rawValue
             let axTap = hotkey != nil
-            Log.session.info("権限: 不足\(missing.count, privacy: .public)件 mic(status=\(micStatus, privacy: .public)) ax(tap=\(axTap, privacy: .public))")
+            let axPreflight = CGPreflightPostEventAccess()
+            let axTrusted = AXIsProcessTrusted()
+            Log.session.info("権限: 不足\(missing.count, privacy: .public)件 mic(status=\(micStatus, privacy: .public)) ax(tap=\(axTap, privacy: .public),preflight=\(axPreflight, privacy: .public),trusted=\(axTrusted, privacy: .public))")
             missingPermissions = missing
         }
     }

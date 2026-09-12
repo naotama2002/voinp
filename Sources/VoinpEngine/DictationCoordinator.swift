@@ -116,6 +116,7 @@ public actor DictationCoordinator {
                 try await inserter.insert(text, into: target)
                 await dispatch(.insertionFinished(.inserted(strategy: inserter.identifier)))
             } catch {
+                Log.insert.error("挿入に失敗: \(String(describing: error), privacy: .public)")
                 await dispatch(.failed(.insertionFailed(.axSilentNoop)))
             }
 
@@ -217,16 +218,23 @@ public actor DictationCoordinator {
     /// PTT の ⌃⌥ を押したまま ⌘V を合成すると ⌃⌥⌘V になり、ペーストにならない。
     /// **時間切れでそのまま挿入してはいけない。** 諦めてペーストボードに残すほうがまし。
     private func waitForModifierRelease(text: String) async {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        let start = ContinuousClock.now
+        let deadline = start.advanced(by: .seconds(3))
         while ContinuousClock.now < deadline {
             let flags = CGEventSource.flagsState(.hidSystemState)
             let held: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
             if flags.intersection(held).isEmpty {
+                let waited = ContinuousClock.now - start
+                if waited > .milliseconds(100) {
+                    Log.session.info("修飾キーの解放を待った: \(waited.components.attoseconds / 1_000_000_000_000_000, privacy: .public)ms")
+                }
                 await dispatch(.modifiersReleased)
                 return
             }
             try? await Task.sleep(for: .milliseconds(20))
         }
+        let flags = CGEventSource.flagsState(.hidSystemState)
+        Log.session.error("修飾キーが 3 秒解放されない flags=\(String(flags.rawValue, radix: 16), privacy: .public)")
         await dispatch(.modifierWaitTimedOut)
     }
 }

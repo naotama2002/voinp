@@ -21,6 +21,11 @@ public struct SessionMachine: Sendable {
     private var target: InsertionTarget?
     private var recordingStarted: ContinuousClock.Instant?
     private var buffer = TranscriptBuffer()
+    /// いま挿入しようとしているテキスト。
+    /// 失敗時のフォールバックで**これ**を退避する。
+    /// buffer.finalText だと、校正で変わった内容や
+    /// 暫定分しか無かった場合を取りこぼす（空文字を貼ってしまう）。
+    private var pendingText: String?
 
     public init(limits: Limits = Limits()) { self.limits = limits }
 
@@ -102,6 +107,7 @@ public struct SessionMachine: Sendable {
         // ── 修飾キー待ち ──────────────────────────────────────
         case (.awaitingModifierRelease(let text), .modifiersReleased):
             guard let t = target else { return abort(reason: .modifiersStuck) }
+            pendingText = text
             phase = .inserting
             return [.insert(text, into: t)]
 
@@ -113,6 +119,7 @@ public struct SessionMachine: Sendable {
                     .scheduleDismiss(after: limits.failureDismiss)]
 
         case (.inserting, .insertionFinished):
+            pendingText = nil
             phase = .idle
             return [.hideHUD]
 
@@ -128,7 +135,8 @@ public struct SessionMachine: Sendable {
 
         case (.inserting, .failed(let e)):
             phase = .failed(e)
-            return [.copyToPasteboardAsFallback(buffer.finalText), .play(.error),
+            let text = pendingText ?? buffer.bestEffortText
+            return [.copyToPasteboardAsFallback(text), .play(.error),
                     .scheduleDismiss(after: limits.failureDismiss)]
 
         case (_, .failed(let e)):

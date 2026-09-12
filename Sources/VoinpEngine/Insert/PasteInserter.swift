@@ -27,11 +27,23 @@ public actor PasteInserter: TextInserter {
     }
 
     public func insert(_ text: String, into target: InsertionTarget) async throws {
-        guard !target.isSecureInput else { throw VoinpError.secureInputActive }
-        guard CGPreflightPostEventAccess() else { throw VoinpError.accessibilityNotGranted }
+        guard !target.isSecureInput else {
+            Log.insert.notice("挿入中止: パスワード欄にフォーカス")
+            throw VoinpError.secureInputActive
+        }
+
+        // **CGPreflightPostEventAccess() でゲートしない。**
+        // TCC の結果はプロセス内でキャッシュされるため、許可済みでも
+        // false を返すことがある（アクセシビリティ判定で同じ問題を踏んだ）。
+        // 実際に post してみるのが正しく、権限の有無は
+        // event tap が動いているかで別途判定している。
+        if !CGPreflightPostEventAccess() {
+            Log.insert.notice("preflight は false だが post を試みる（キャッシュの可能性）")
+        }
 
         let saved = await MainActor.run { pasteboard.snapshot() }
         let ours = await MainActor.run { pasteboard.clearAndWrite(text, concealed: true) }
+        Log.insert.info("ペーストボードに書き込み: \(text.count, privacy: .public)文字 bundle=\(target.bundleIdentifier ?? "?", privacy: .public)")
 
         try postCommandV()
 
@@ -56,7 +68,11 @@ public actor PasteInserter: TextInserter {
         let src = CGEventSource(stateID: .hidSystemState)
         guard let down = CGEvent(keyboardEventSource: src, virtualKey: v, keyDown: true),
               let up = CGEvent(keyboardEventSource: src, virtualKey: v, keyDown: false)
-        else { throw VoinpError.accessibilityNotGranted }
+        else {
+            Log.insert.error("CGEvent を生成できません")
+            throw VoinpError.accessibilityNotGranted
+        }
+        Log.insert.info("⌘V を合成 keyCode=\(v, privacy: .public)")
         down.flags = .maskCommand
         up.flags = .maskCommand
         down.post(tap: .cghidEventTap)

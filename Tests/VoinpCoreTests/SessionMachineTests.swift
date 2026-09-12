@@ -147,3 +147,40 @@ struct SessionMachineModelTests {
         #expect(actions.contains(.startCapture(target)))
     }
 }
+
+@Suite("SessionMachine — 挿入失敗時の退避")
+struct SessionMachineFallbackTests {
+    let target = InsertionTarget(bundleIdentifier: "x", processIdentifier: 1, isSecureInput: false)
+
+    private func upToInserting(_ m: inout SessionMachine, refined: String) {
+        let t = ContinuousClock.now
+        _ = m.handle(.startRequested(target: target), at: t)
+        _ = m.handle(.audioStarted, at: t)
+        let t1 = t.advanced(by: .seconds(2))
+        _ = m.handle(.stopRequested, at: t1)
+        _ = m.handle(.transcriptionFinished(text: "生原稿"), at: t1)
+        _ = m.handle(.refinementFinished(text: refined), at: t1)
+        _ = m.handle(.modifiersReleased, at: t1)
+    }
+
+    @Test("挿入に失敗したら、校正後のテキストを退避する（生原稿ではない）")
+    func fallbackUsesRefinedText() {
+        var m = SessionMachine()
+        upToInserting(&m, refined: "校正後のテキスト。")
+        let actions = m.handle(.failed(.insertionFailed(.axSilentNoop)), at: .now)
+        #expect(actions.contains(.copyToPasteboardAsFallback("校正後のテキスト。")),
+                "buffer.finalText を使うと校正結果を取りこぼす")
+    }
+
+    @Test("退避するテキストが空にならない")
+    func fallbackNeverEmpty() {
+        var m = SessionMachine()
+        upToInserting(&m, refined: "何か")
+        let actions = m.handle(.failed(.insertionFailed(.axSilentNoop)), at: .now)
+        let texts = actions.compactMap { action -> String? in
+            if case .copyToPasteboardAsFallback(let t) = action { return t }
+            return nil
+        }
+        #expect(texts.allSatisfy { !$0.isEmpty }, "空文字を貼り付けてはいけない")
+    }
+}

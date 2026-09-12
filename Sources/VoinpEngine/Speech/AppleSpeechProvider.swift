@@ -14,6 +14,40 @@ public struct AppleSpeechProvider: TranscriptionProvider {
 
     public init() {}
 
+    /// 自分が予約したロケールを覚えておき、別のロケールに移るとき解放する。
+    ///
+    /// `AssetInventory` の同時予約は **5 が上限**で、超えると
+    /// `assetInstallationRequest` が "Too many allocated locales" で失敗する。
+    /// 予約しっぱなしにすると、ロケールを変えるたびに枠を食い潰す。
+    private static let reservations = Reservations()
+
+    final class Reservations: @unchecked Sendable {
+        private let lock = NSLock()
+        private var held: Set<String> = []
+
+        /// 目的のロケールだけを予約状態にする。他は解放する。
+        func ensureOnly(_ locale: Locale) async {
+            let id = locale.identifier
+            let toRelease: [String] = lock.withLock {
+                let others = held.subtracting([id])
+                held = [id]
+                return Array(others)
+            }
+            for other in toRelease {
+                _ = await AssetInventory.release(reservedLocale: Locale(identifier: other))
+            }
+            _ = try? await AssetInventory.reserve(locale: locale)
+        }
+
+        /// 上限に当たったときの最後の手段。自分の予約を全部手放す。
+        func releaseAll() async {
+            let all: [String] = lock.withLock { let h = Array(held); held = []; return h }
+            for id in all {
+                _ = await AssetInventory.release(reservedLocale: Locale(identifier: id))
+            }
+        }
+    }
+
     private func makeTranscriber(locale: Locale, request: TranscriptionRequest) -> DictationTranscriber {
         DictationTranscriber(
             locale: locale,
@@ -23,23 +57,23 @@ public struct AppleSpeechProvider: TranscriptionProvider {
             attributeOptions: [])
     }
 
+    /// 取得済みかどうかの判定。
+    ///
+    /// **`status(forModules:)` を使い、その前にロケールを予約する。**
+    /// 予約しないと、資産がディスク上にあっても `.supported`（未インストール）と
+    /// 報告されるため、起動のたびに「モデル未取得」と誤判定してしまう。
+    ///
+    /// `assetInstallationRequest == nil` を判定に使う手も試したが、
+    /// **取得済みでも要求オブジェクトを返すことがあり**、判定には使えなかった。
+    ///
+    /// 予約は上限 5。`Reservations` が目的のロケール以外を解放して枠を守る。
     public func readiness(for request: TranscriptionRequest) async -> Readiness {
         guard let canonical = await DictationTranscriber.supportedLocale(equivalentTo: request.locale)
         else { return .unsupported("\(request.locale.identifier) は未対応です") }
 
-        // **status を見る前に予約する。**
-        //
-        // 予約はプロセスごとで、新しいプロセスは必ず reservedLocales = [] から始まる。
-        // 未予約のロケールは、資産がディスク上にあっても status が .supported
-        // （= 未インストール）と報告される。
-        // 予約せずに判定すると、**起動のたびに「モデル未取得」と誤判定**し、
-        // セットアップウィザードが毎回ダウンロードを促すことになる（実際にそうなっていた）。
-        //
-        // 予約は冪等で、同時に 5 ロケールまで保持できる。
-        _ = try? await AssetInventory.reserve(locale: canonical)
+        await Self.reservations.ensureOnly(canonical)
 
         let t = makeTranscriber(locale: canonical, request: request)
-        // installedLocales は当てにならない。必ず status(forModules:) で判定する。
         switch await AssetInventory.status(forModules: [t]) {
         case .installed:   return .ready
         case .supported, .downloading: return .needsModelDownload(canonical)
@@ -50,10 +84,23 @@ public struct AppleSpeechProvider: TranscriptionProvider {
 
     public func downloadModel(for locale: Locale,
                               progress: @Sendable @escaping (Double) -> Void) async throws {
+        Log.speech.info("モデル取得を開始: \(locale.identifier, privacy: .public)")
         let canonical = await DictationTranscriber.supportedLocale(equivalentTo: locale) ?? locale
         let t = makeTranscriber(locale: canonical, request: .init(locale: canonical))
 
-        if let request = try await AssetInventory.assetInstallationRequest(supporting: [t]) {
+        // **インストール要求の前に予約を手放す。**
+        //
+        // 予約枠を握ったまま要求すると "Too many allocated locales, 5 maximum" で失敗する。
+        // 実測: 予約なしなら要求は通り、予約を持っていると通らない。
+        // 予約は「取得済み資産を OS に削除させない」ためのものなので、
+        // 取得が終わってからで間に合う。
+        await Self.reservations.releaseAll()
+
+        Log.speech.info("インストール要求を問い合わせ中…")
+        let installRequest = try await AssetInventory.assetInstallationRequest(supporting: [t])
+
+        if let request = installRequest {
+            Log.speech.info("インストール要求あり。ダウンロード開始")
             let p = request.progress
             let poll = Task.detached {
                 while !Task.isCancelled && !p.isFinished {
@@ -63,17 +110,15 @@ public struct AppleSpeechProvider: TranscriptionProvider {
             }
             defer { poll.cancel() }
             try await request.downloadAndInstall()
+            Log.speech.info("ダウンロード完了")
+        } else {
+            Log.speech.info("インストール要求なし（取得済み）")
         }
         progress(1.0)
 
         // **予約しないと OS に資産を削除されうる。**
         // 数週間後に突然また初回ダウンロードが走る、という掴みにくい不具合になる。
-        // 失敗は握り潰さずログに残す（上限 5 ロケールに達している等）。
-        do {
-            _ = try await AssetInventory.reserve(locale: canonical)
-        } catch {
-            Log.speech.error("ロケールを予約できません: \(String(describing: error), privacy: .public)")
-        }
+        await Self.reservations.ensureOnly(canonical)
     }
 
     public func preferredFormat(for request: TranscriptionRequest) async -> AudioFormatDescription {

@@ -23,6 +23,12 @@ public final class AppModel {
     /// （実測で 0.0 のまま completed=0/1）、0% のバーが固まって見える。
     /// その場合は不定表示に切り替える。
     public private(set) var hasMeaningfulProgress = false
+    /// 取得に失敗した理由。ウィザードに出して、黙って止まらないようにする。
+    public private(set) var modelDownloadError: String?
+    /// 取得を始めてからの経過秒。
+    /// 進捗が返らない以上、不定バーだけでは「生きているのか固まったのか」が分からない。
+    public private(set) var modelDownloadElapsed: Int = 0
+    private var elapsedTimer: Timer?
 
     public var settings: Settings
     let dependencies: Dependencies
@@ -182,22 +188,45 @@ public final class AppModel {
         isDownloadingModel = true
         modelProgress = 0
         hasMeaningfulProgress = false
+        modelDownloadError = nil
+        modelDownloadElapsed = 0
+        elapsedTimer?.invalidate()
+        elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+            Task { @MainActor [weak self] in self?.modelDownloadElapsed += 1 }
+        }
         defer { isDownloadingModel = false }
         do {
-            try await dependencies.speechProvider.downloadModel(
-                for: Locale(identifier: settings.transcription.locale)
-            ) { [weak self] p in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.modelProgress = p
-                    if p > 0 && p < 1 { self.hasMeaningfulProgress = true }
+            // **上限時間を設ける。** 失敗や停止でプログレスバーが永遠に回り続けると、
+            // ユーザーは何が起きているか分からないまま待たされる（実際にそうなった）。
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                let provider = dependencies.speechProvider
+                let locale = Locale(identifier: settings.transcription.locale)
+                group.addTask {
+                    try await provider.downloadModel(for: locale) { p in
+                        Task { @MainActor [weak self] in
+                            guard let self else { return }
+                            self.modelProgress = p
+                            if p > 0 && p < 1 { self.hasMeaningfulProgress = true }
+                        }
+                    }
                 }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(600))
+                    throw VoinpError.modelAssetsMissing("タイムアウト")
+                }
+                try await group.next()
+                group.cancelAll()
             }
         } catch {
-            lastError = "モデルを取得できませんでした"
+            Log.speech.error("モデル取得に失敗: \(String(describing: error), privacy: .public)")
+            modelDownloadError = Self.describe(error)
+            lastError = modelDownloadError
         }
+        elapsedTimer?.invalidate()
+        elapsedTimer = nil
         modelProgress = nil
         await refreshModelReadiness()
+        Log.speech.info("取得処理を終了: \(self.modelDownloadElapsed, privacy: .public)秒 readiness=\(String(describing: self.modelReadiness), privacy: .public)")
     }
 
     // MARK: - セットアップ
@@ -262,6 +291,18 @@ public final class AppModel {
         case .accessibility: .accessibility
         }
         NSWorkspace.shared.open(pane.url)
+    }
+
+    /// 失敗理由をユーザー向けの言葉に直す。
+    private static func describe(_ error: any Error) -> String {
+        let ns = error as NSError
+        if ns.localizedDescription.contains("Too many allocated locales") {
+            return "同時に扱えるロケール数の上限に達しました。アプリを再起動してください。"
+        }
+        if case VoinpError.modelAssetsMissing("タイムアウト") = error {
+            return "取得に時間がかかりすぎました。ネットワークを確認して再試行してください。"
+        }
+        return "モデルを取得できませんでした（\(ns.localizedDescription)）"
     }
 
     /// マイクの許可にアプリ再起動が必要な状態か。

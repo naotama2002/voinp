@@ -217,18 +217,34 @@ public struct SetupView: View {
                             // Speech の資産ダウンロードは進捗を返さないことがある
                             // （実測で fractionCompleted が 0.0 のまま完了した）。
                             // 0% のバーを出すと固まったように見えるので不定表示にする。
+                            // macOS は資産ダウンロードの進捗を返さない（実測で 0.0 のまま）。
+                            // 不定バーだけだと「固まったのか動いているのか」が分からないので、
+                            // 経過時間を添えて生きていることを示す。
                             ProgressView {
-                                Text("取得中…").font(.system(size: 12))
+                                Text("取得中… \(model.modelDownloadElapsed) 秒経過")
+                                    .font(.system(size: 12))
+                                    .monospacedDigit()
                             }
                             .progressViewStyle(.linear)
                         }
-                        Text("ネットワーク環境によっては数分かかることがあります。")
+                        Text("macOS が進捗を返さないため、完了までバーは動き続けます。\nネットワーク環境によっては数分かかります。")
                             .font(.system(size: 11)).foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     .frame(maxWidth: 320)
                 } else {
-                    Button("モデルを取得") { Task { await model.downloadModel() } }
+                    VStack(alignment: .leading, spacing: 10) {
+                        if let e = model.modelDownloadError {
+                            Label(e, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                                .font(.system(size: 12))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Button(model.modelDownloadError == nil ? "モデルを取得" : "再試行") {
+                            Task { await model.downloadModel() }
+                        }
                         .buttonStyle(.borderedProminent)
+                    }
                 }
             }
             Spacer()

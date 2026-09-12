@@ -59,6 +59,9 @@ hits = []
 for pat in ('docs/*.md', 'README.md', 'Resources/Prompts/*.md', 'Sources/**/*.swift'):
     for p in glob.glob(pat, recursive=True):
         for i, l in enumerate(io.open(p, encoding='utf-8'), 1):
+            # 言語名の表示など、意図して書いた箇所は明示的に許可する
+            if 'voinp:allow-script' in l:
+                continue
             if bad.search(l):
                 hits.append(f'{p}:{i}: {l.strip()[:70]}')
 print('\n'.join(hits))

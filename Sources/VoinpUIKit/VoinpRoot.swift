@@ -9,6 +9,8 @@ public enum VoinpRoot {
     @MainActor static var dependencies = Dependencies.base()
     @MainActor static var model: AppModel?
     @MainActor static var setup: SetupWindowController?
+    @MainActor static var settingsWindow: SettingsWindowController?
+    @MainActor static let activationPolicy = ActivationPolicyController()
 
     @MainActor
     public static func run(_ deps: Dependencies) {
@@ -29,9 +31,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let model = VoinpRoot.model else { return }
             model.start()
 
-            let setup = SetupWindowController(model: model)
+            let setup = SetupWindowController(model: model, policy: VoinpRoot.activationPolicy)
             VoinpRoot.setup = setup
             model.presentSetup = { [weak setup] in setup?.show() }
+
+            let settings = SettingsWindowController(model: model, policy: VoinpRoot.activationPolicy)
+            VoinpRoot.settingsWindow = settings
+            model.presentSettings = { [weak settings] in settings?.show() }
 
             // LSUIElement のアプリは起動しても画面に何も出ないため、
             // メニューバーのアイコンに気づけない。**自分からウィザードを出す。**

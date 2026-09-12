@@ -138,7 +138,7 @@ extension KeyCombo {
         "leftcommand": .leftCommand, "rightcommand": .rightCommand,
     ]
     /// 実用上必要な範囲のみ。足りなければ "key<n>" で数値指定できる。
-    static let keyNames: [UInt16: String] = [
+    public static let keyNames: [UInt16: String] = [
         0x31: "space", 0x24: "return", 0x30: "tab", 0x35: "escape",
         0x33: "delete", 0x7A: "f1", 0x78: "f2", 0x63: "f3", 0x76: "f4",
         0x60: "f5", 0x61: "f6", 0x62: "f7", 0x64: "f8", 0x65: "f9",

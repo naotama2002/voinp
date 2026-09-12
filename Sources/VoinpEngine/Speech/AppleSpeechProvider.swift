@@ -14,6 +14,20 @@ public struct AppleSpeechProvider: TranscriptionProvider {
 
     public init() {}
 
+    /// 設定 UI に出す言語の候補。
+    /// `supportedLocales` は 50 以上あって選びにくいので、よく使うものに絞る。
+    /// 他の言語は config.json に直接書けば使える。
+    public static let commonLocales: [LocaleChoice] = [
+        .init(identifier: "ja-JP", displayName: "日本語"),
+        .init(identifier: "en-US", displayName: "English (US)"),
+        .init(identifier: "en-GB", displayName: "English (UK)"),
+        .init(identifier: "zh-CN", displayName: "中文（簡体）"),
+        .init(identifier: "ko-KR", displayName: "한국어"),  // voinp:allow-script
+        .init(identifier: "de-DE", displayName: "Deutsch"),
+        .init(identifier: "fr-FR", displayName: "Français"),
+        .init(identifier: "es-ES", displayName: "Español"),
+    ]
+
     /// 自分が予約したロケールを覚えておき、別のロケールに移るとき解放する。
     ///
     /// `AssetInventory` の同時予約は **5 が上限**で、超えると
@@ -267,5 +281,15 @@ actor AppleSpeechSession: TranscriptionSession {
             }
         }
         return buf
+    }
+}
+
+/// 設定 UI 用の言語候補。
+public struct LocaleChoice: Hashable, Sendable {
+    public let identifier: String
+    public let displayName: String
+    public init(identifier: String, displayName: String) {
+        self.identifier = identifier
+        self.displayName = displayName
     }
 }

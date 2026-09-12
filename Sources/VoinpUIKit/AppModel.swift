@@ -35,6 +35,8 @@ public final class AppModel {
 
     /// セットアップウィザードを出す。合成ルートから注入する。
     public var presentSetup: (() -> Void)?
+    /// 設定ウィンドウを出す。合成ルートから注入する。
+    public var presentSettings: (() -> Void)?
 
     private var coordinator: DictationCoordinator?
     private var hotkey: EventTapHotkeySource?
@@ -282,6 +284,53 @@ public final class AppModel {
         NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in
             Task { @MainActor in NSApplication.shared.terminate(nil) }
         }
+    }
+
+    // MARK: - 設定の更新
+
+    private let configStore = ConfigStore()
+
+    /// 設定を変更して保存し、実行中の各部へ反映する。
+    ///
+    /// 保存の失敗は握り潰さない。書けないまま UI だけ変わると、
+    /// 再起動で戻って原因が分からなくなる。
+    public func update(_ mutate: (inout Settings) -> Void) {
+        var next = settings
+        mutate(&next)
+        guard next != settings else { return }
+
+        let hotkeyChanged = next.hotkey != settings.hotkey
+        let localeChanged = next.transcription.locale != settings.transcription.locale
+        settings = next
+
+        do {
+            try configStore.save(next)
+        } catch {
+            Log.config.error("設定を保存できません: \(String(describing: error), privacy: .public)")
+            lastError = "設定を保存できませんでした"
+        }
+
+        Task { await coordinator?.update(settings: next) }
+        if hotkeyChanged { restartHotkey() }
+        if localeChanged { Task { await refreshModelReadiness() } }
+    }
+
+    /// ホットキーの設定が変わったら張り直す。
+    private func restartHotkey() {
+        hotkey?.stop()
+        hotkey = nil
+        refreshPermissions()   // この中で新しい設定で張り直される
+    }
+
+    /// 選べる言語。取得済みかどうかは別途 modelReadiness で示す。
+    public var availableLocales: [LocaleChoice] {
+        AppleSpeechProvider.commonLocales
+    }
+
+    public func openConfigDirectory() {
+        let dir = configStore.directory
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(dir)
     }
 
     /// 明示的に設定画面を開く。メニューの別項目として出す。

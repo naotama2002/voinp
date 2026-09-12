@@ -28,7 +28,8 @@ struct MenuBarContent: View {
         if let e = model.lastError { Text("直近のエラー: \(e)") }
 
         Divider()
-        Button("設定ファイルを開く") { openConfigDirectory() }
+        Button("設定…") { model.presentSettings?() }
+            .keyboardShortcut(",")
         Button("Voinp を終了") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
     }
@@ -54,10 +55,4 @@ struct MenuBarContent: View {
         }
     }
 
-    private func openConfigDirectory() {
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "Library/Application Support/voinp")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        NSWorkspace.shared.open(dir)
-    }
 }

@@ -9,14 +9,20 @@ import SwiftUI
 /// アクセサリアプリでは出すタイミングをこちらが完全に決めたいので、
 /// HUD と同じく NSWindow を自分で持つ。
 @MainActor
-final class SetupWindowController {
+final class SetupWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let model: AppModel
+    private let policy: ActivationPolicyController
+    private var isOpen = false
 
-    init(model: AppModel) { self.model = model }
+    init(model: AppModel, policy: ActivationPolicyController) {
+        self.model = model
+        self.policy = policy
+    }
 
     func show() {
         if let window {
+            if !isOpen { isOpen = true; policy.windowDidOpen() }
             activateAndFront(window)
             return
         }
@@ -31,12 +37,27 @@ final class SetupWindowController {
         w.contentView = NSHostingView(rootView: SetupView(model: model, onFinish: { [weak self] in
             self?.close()
         }))
+        w.delegate = self
         window = w
+        isOpen = true
+        policy.windowDidOpen()
         activateAndFront(w)
     }
 
     func close() {
         window?.orderOut(nil)
+        windowDidClose()
+    }
+
+    /// 閉じるボタンで閉じられた場合もここを通る。
+    nonisolated func windowWillClose(_ notification: Notification) {
+        MainActor.assumeIsolated { windowDidClose() }
+    }
+
+    private func windowDidClose() {
+        guard isOpen else { return }
+        isOpen = false
+        policy.windowDidClose()
     }
 
     /// アクセサリアプリのウィンドウは activate しないと他のウィンドウの背後に開く。

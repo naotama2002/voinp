@@ -12,6 +12,8 @@ public enum Log {
     public static let hotkey = Logger(subsystem: subsystem, category: "hotkey")
     public static let insert = Logger(subsystem: subsystem, category: "insert")
     public static let config = Logger(subsystem: subsystem, category: "config")
+    public static let net = Logger(subsystem: subsystem, category: "net")
+    public static let refine = Logger(subsystem: subsystem, category: "refine")
 
     public static let subsystem = "com.naotama2002.voinp"
 }

@@ -24,6 +24,23 @@ public struct EgressPolicySnapshot: Equatable, Sendable {
         self.probeCandidate = probeCandidate
     }
 
+    /// このホスト・用途を許可するか。
+    ///
+    /// 許可ホストは設定から導出されたものだけ。
+    /// 加えて、設定画面で「接続」を押した直後の短命な候補のみ通す
+    /// （まだ保存されていないホストのモデル一覧を取るため）。
+    public func allows(host: String, purpose: EgressPurpose,
+                       at now: ContinuousClock.Instant) -> Bool {
+        if allowedHosts.contains(host) { return true }
+        if let candidate = probeCandidate,
+           candidate.host == host,
+           candidate.isValid(at: now),
+           purpose == .modelDiscovery {
+            return true
+        }
+        return false
+    }
+
     /// 設定から導出する。ユーザーが埋めたフィールド以外から送信先は生えない。
     ///
     /// **強制に使うのは到達範囲 (`allowedEgressClasses`) だけ。**

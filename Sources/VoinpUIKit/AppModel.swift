@@ -29,7 +29,7 @@ public final class AppModel {
     private var hotkey: EventTapHotkeySource?
     private var hud: HUDPanelController?
     private var tasks: [Task<Void, Never>] = []
-    private var permissionTimer: Timer?
+    private var activationObserver: (any NSObjectProtocol)?
 
     public init(dependencies: Dependencies) {
         self.dependencies = dependencies
@@ -56,31 +56,28 @@ public final class AppModel {
             for await update in coord.updates { self?.apply(update) }
         })
 
-        Log.session.info("起動: 権限不足 \(self.missingPermissions.count, privacy: .public) 件")
         refreshPermissions()
         Task { await refreshModelReadiness() }
 
-        // AXIsProcessTrusted はプロセスごとに初回問い合わせ時点でキャッシュされる。
-        // 許可された瞬間に反応するようポーリングする（再起動を要求しないため）。
-        permissionTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            Task { @MainActor [weak self] in self?.pollPermissions() }
+        // 権限はポーリングしない。
+        //
+        // 許可はユーザーがシステム設定で行うので、戻ってきた瞬間＝
+        // **アプリがアクティブになった瞬間**に確認すれば足りる。
+        // 判定には event tap の作成という副作用のある操作を含むため、
+        // 毎秒回すのは無駄でもある。
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { [weak self] in self?.refreshPermissions() }
         }
     }
 
-    private var lastTapAttempt: ContinuousClock.Instant?
-
-    /// tap の作成を試みる。**これ自体が許可の判定になる。**
-    /// 毎秒作り直すのは無駄なので、失敗したときは間隔を空けて再試行する。
+    /// tap の作成を試みる。**成否がそのまま許可の判定になる。**
     @discardableResult
     private func startHotkeyIfPossible() -> Bool {
         if hotkey != nil { return true }
         guard let combo = KeyCombo(string: settings.hotkey.binding) else { return false }
-
-        let now = ContinuousClock.now
-        if let last = lastTapAttempt, now - last < .seconds(2) {
-            return false   // 直近に試して失敗している。状態は据え置き。
-        }
-        lastTapAttempt = now
 
         let behavior = HotkeyInterpreter.Behavior(rawValue: settings.hotkey.behavior) ?? .hybrid
         let source = EventTapHotkeySource(config: .init(
@@ -99,7 +96,7 @@ public final class AppModel {
         }
     }
 
-    private func pollPermissions() { refreshPermissions() }
+
 
     // MARK: - 更新の反映（switch 1 つ）
 
@@ -134,6 +131,11 @@ public final class AppModel {
     /// 再起動するまで false のままになることがある。
     /// **実際に event tap を作れたかどうか**で判定すれば、その問題を回避できる。
     public func refreshPermissions() {
+        // 全部揃っていれば何もしない。
+        // ホットキーが動いている限りアクセシビリティは効いており、
+        // マイクも一度許可されれば実行中に失われることはない。
+        if missingPermissions.isEmpty && hotkey != nil { return }
+
         var missing: [SessionError.Permission] = []
         if !Permissions.isMicrophoneUsable { missing.append(.microphone) }
         if !startHotkeyIfPossible() { missing.append(.accessibility) }

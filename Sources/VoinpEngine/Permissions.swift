@@ -49,8 +49,11 @@ public enum Permissions {
         }
     }
 
-    /// キャッシュされた状態と実際に開けるかの両方を見る。
-    /// どちらかが「使える」と言えば使えると判断する。
+    /// マイクが使えるか。
+    ///
+    /// **まず副作用のない `authorizationStatus` を見る。** 許可されていればそれで終わり。
+    /// そうでないときだけ実地検証に落ちる（キャッシュが古い可能性があるため）。
+    /// 呼ばれるのは権限確認のタイミングだけなので、実地検証が走る頻度は低い。
     public static var isMicrophoneUsable: Bool {
         if microphoneStatus == .authorized { return true }
         return canOpenMicrophone()

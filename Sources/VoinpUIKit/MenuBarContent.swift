@@ -4,6 +4,7 @@ import VoinpEngine
 
 struct MenuBarContent: View {
     let model: AppModel
+    let openSetup: () -> Void
 
     var body: some View {
         Text(model.privacyHeadline)
@@ -37,6 +38,7 @@ struct MenuBarContent: View {
         if let e = model.lastError { Text("直近のエラー: \(e)") }
 
         Divider()
+        Button("セットアップを開く…") { openSetup() }
         Button("設定ファイルを開く") { openConfigDirectory() }
         Button("Voinp を終了") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")

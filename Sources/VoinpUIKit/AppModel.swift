@@ -14,6 +14,8 @@ public final class AppModel {
     public private(set) var missingPermissions: [SessionError.Permission] = []
     public private(set) var modelProgress: Double?
     public private(set) var lastError: String?
+    public private(set) var modelReadiness: Readiness?
+    public private(set) var isDownloadingModel = false
 
     public var settings: Settings
     let dependencies: Dependencies
@@ -51,6 +53,7 @@ public final class AppModel {
 
         Log.session.info("起動: 権限不足 \(self.missingPermissions.count, privacy: .public) 件")
         startHotkeyIfPossible()
+        Task { await refreshModelReadiness() }
 
         // AXIsProcessTrusted はプロセスごとに初回問い合わせ時点でキャッシュされる。
         // 許可された瞬間に反応するようポーリングする（再起動を要求しないため）。
@@ -116,6 +119,50 @@ public final class AppModel {
     public func refreshPermissions() {
         missingPermissions = Permissions.missingPermissions()
     }
+
+    // MARK: - 音声モデル
+
+    public func refreshModelReadiness() async {
+        let request = TranscriptionRequest(
+            locale: Locale(identifier: settings.transcription.locale))
+        modelReadiness = await AppleSpeechProvider().readiness(for: request)
+    }
+
+    public func downloadModel() async {
+        guard !isDownloadingModel else { return }
+        isDownloadingModel = true
+        modelProgress = 0
+        defer { isDownloadingModel = false }
+        do {
+            try await AppleSpeechProvider().downloadModel(
+                for: Locale(identifier: settings.transcription.locale)
+            ) { [weak self] p in
+                Task { @MainActor in self?.modelProgress = p }
+            }
+        } catch {
+            lastError = "モデルを取得できませんでした"
+        }
+        modelProgress = nil
+        await refreshModelReadiness()
+    }
+
+    // MARK: - セットアップ
+
+    /// セットアップが必要か。**状態から導出する**ので、
+    /// 後から権限を取り消された場合も自動的にウィザードが出る。
+    public var needsSetup: Bool {
+        !missingPermissions.isEmpty || modelReadiness != .ready
+    }
+
+    /// 一度でも最後まで案内したか。すべて揃っていても初回は使い方を見せたい。
+    private static let completedKey = "onboardingCompleted"
+    public var hasSeenSetup: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.completedKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.completedKey) }
+    }
+
+    /// 初回起動時にウィザードを出すべきか。
+    public var shouldPresentSetup: Bool { needsSetup || !hasSeenSetup }
 
     /// 許可を求める。**OS のダイアログと設定画面を同時に出さない。**
     /// 両方出すと、ダイアログの上に設定が被さって何が起きたのか分からなくなる。

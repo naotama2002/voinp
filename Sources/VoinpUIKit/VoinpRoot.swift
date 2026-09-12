@@ -8,6 +8,7 @@ public enum VoinpRoot {
     /// `App` の `init()` は引数を取れないため、合成ルートから渡された依存をここで受け渡す。
     @MainActor static var dependencies = Dependencies.base()
     @MainActor static var model: AppModel?
+    @MainActor static var setup: SetupWindowController?
 
     @MainActor
     public static func run(_ deps: Dependencies) {
@@ -25,7 +26,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             NSApp.setActivationPolicy(.accessory)
             Log.session.info("applicationDidFinishLaunching")
-            VoinpRoot.model?.start()
+            guard let model = VoinpRoot.model else { return }
+            model.start()
+
+            let setup = SetupWindowController(model: model)
+            VoinpRoot.setup = setup
+
+            // LSUIElement のアプリは起動しても画面に何も出ないため、
+            // メニューバーのアイコンに気づけない。**自分からウィザードを出す。**
+            // 権限やモデルが揃っていなければ毎回出る（取り消された場合も自動で復帰する）。
+            //
+            // モデルの状態確認は非同期なので、**終わってから判定する**。
+            // 先に判定すると modelReadiness が nil のまま「未準備」と誤判定し、
+            // 完了済みでも毎回ウィザードが出てしまう。
+            Task { @MainActor in
+                await model.refreshModelReadiness()
+                guard model.shouldPresentSetup else {
+                    Log.session.info("セットアップ不要")
+                    return
+                }
+                Log.session.info("セットアップを表示")
+                setup.show()
+            }
         }
     }
 }
@@ -42,7 +64,7 @@ struct VoinpApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuBarContent(model: model)
+            MenuBarContent(model: model, openSetup: { VoinpRoot.setup?.show() })
         } label: {
             Image(systemName: model.menuBarSymbol)
         }

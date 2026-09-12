@@ -25,6 +25,11 @@ public struct EgressPolicySnapshot: Equatable, Sendable {
     }
 
     /// 設定から導出する。ユーザーが埋めたフィールド以外から送信先は生えない。
+    ///
+    /// **強制に使うのは到達範囲 (`allowedEgressClasses`) だけ。**
+    /// `openaiCompatible.operatorKind`（自社運用かどうか）は表示専用の申告であり、
+    /// ここで参照してはいけない。申告で許可が広がると、
+    /// 設定を書き換えられる攻撃者に送信経路を渡すことになる。
     public static func derive(from settings: Settings, hasConfigError: Bool) -> EgressPolicySnapshot {
         guard !hasConfigError, settings.privacy.allowNetwork else { return .denyAll }
 
@@ -68,5 +73,58 @@ extension EgressClass {
         case "publicInternet": self = .publicInternet
         default: return nil
         }
+    }
+}
+
+// MARK: - PrivacyPosture の導出
+
+extension PrivacyPosture {
+    /// 設定の純粋関数。I/O なし。完全にユニットテスト可能。
+    ///
+    /// `reachResolver` はホスト名を到達範囲に分類する。実運用では DNS 解決を伴うが、
+    /// テストでは固定値を渡せるようにしてある（判定の分岐を漏れなく検査するため）。
+    public static func evaluate(
+        _ settings: Settings,
+        hasConfigError: Bool,
+        reachResolver: (String) -> EgressClass
+    ) -> PrivacyPosture {
+        if hasConfigError {
+            return PrivacyPosture(level: .misconfigured, destinations: [])
+        }
+        guard settings.privacy.allowNetwork, settings.refinement.enabled,
+              settings.refinement.provider == "openai-compatible",
+              let url = URL(string: settings.refinement.openaiCompatible.baseURL),
+              let host = url.host
+        else {
+            return .offline
+        }
+
+        let reach = reachResolver(host)
+        // 到達範囲の上限を超える設定は、そもそもゲートが送らせない。
+        let maxAllowed = settings.privacy.allowedEgressClasses
+            .compactMap(EgressClass.init(name:)).max() ?? .loopback
+        guard reach <= maxAllowed else { return .offline }
+
+        let op: OperatorKind = switch settings.refinement.openaiCompatible.operatorKind {
+        case "self-hosted": .selfHosted
+        case "vendor": .vendor
+        default: .unknown
+        }
+
+        let destination = Destination(
+            dataKind: .refinedText,
+            host: host,
+            port: url.port ?? (url.scheme == "https" ? 443 : 80),
+            reach: reach,
+            operatorKind: op,
+            providerID: "openai-compatible")
+
+        // アイコンは到達範囲だけで決める。申告で優しくならない。
+        let level: Level = switch reach {
+        case .loopback: .loopbackOnly
+        case .privateNetwork: .localNetwork
+        case .publicInternet: .external
+        }
+        return PrivacyPosture(level: level, destinations: [destination])
     }
 }

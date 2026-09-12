@@ -61,8 +61,13 @@ public struct Settings: Codable, Equatable, Sendable {
         public init() {}
 
         public struct OpenAICompatible: Codable, Equatable, Sendable {
+            /// loopback / 社内 LAN / 社内 HTTPS サーバのいずれも取りうる。
+            /// 例: "http://127.0.0.1:1234/v1", "https://llm.example.co.jp/v1"
             public var baseURL = "http://127.0.0.1:1234/v1"
             public var model = ""
+            /// 誰が運用しているか。**表示専用の申告であり、送信許可を広げない。**
+            /// 許可を決めるのは privacy.allowedEgressClasses（到達範囲）だけ。
+            public var operatorKind = "self-hosted"   // "self-hosted" | "vendor"
             public var requiresAPIKey = false
             public var extraHeaders: [String: String] = [:]
             public init() {}

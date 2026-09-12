@@ -261,59 +261,112 @@ UI にもそう出す:
 **真にゼロ egress なのは、リテラル IP の loopback だけ。**
 下の姿勢レベルを区別しているのは、まさにこの精度を保つためである。
 
-## D.5 PrivacyPosture — 3 系統をそれぞれ追跡する
+## D.5 PrivacyPosture — 到達範囲と運用主体を分ける
+
+### 混同してはいけない 2 つの軸
+
+| 軸 | 例 | 機械的に判定できるか | 用途 |
+|---|---|---|---|
+| **到達範囲** (`EgressClass`) | loopback / 社内 LAN / インターネット経由 | **できる**（解決後アドレスを分類） | **強制**。これだけが許可を決める |
+| **運用主体** (`OperatorKind`) | 自社運用 / 外部ベンダー | **できない**（ユーザーの申告） | **表示のみ**。許可を広げない |
+
+この 2 つは独立している。**セルフホストの LLM は loopback とは限らない。**
+
+| 構成 | 到達範囲 | 運用主体 |
+|---|---|---|
+| `http://127.0.0.1:1234/v1` (LM Studio) | `loopback` | selfHosted |
+| `https://10.1.2.3/v1` (社内 LAN / VPN) | `privateNetwork` | selfHosted |
+| **`https://llm.example.co.jp/v1` (社内サーバ)** | **`publicInternet`** | **selfHosted** |
+| `https://api.openai.com/v1` | `publicInternet` | vendor |
+
+3 行目が要点である。**自社運用でも、公開 DNS 名の HTTPS なら到達範囲はインターネット経由**になる。
+到達範囲を甘くしてはいけないが、表示まで `api.openai.com` と同じにするのは実態を誤る。
 
 ```swift
-public struct PrivacyPosture: Sendable, Equatable {
-    public enum Level: Sendable, Comparable {
-        case offline          // この設定では到達できる送信先がない
-        case loopbackOnly     // 127.0.0.1 / ::1 のみ。「この Mac の外に出ない」が文字通り真
-        case localNetwork     // Mac の外には出るが LAN 内に留まる
-        case cloud            // 公開インターネット
-        case misconfigured    // 設定エラー → 通信を強制停止
+public struct PrivacyPosture: Equatable, Sendable {
+    /// メニューバーのアイコンはこれで決める。**検証可能な到達範囲のみ**に基づく。
+    public enum Level: Int, Comparable, Sendable {
+        case offline = 0        // 到達できる送信先がない
+        case loopbackOnly = 1   // この Mac の中だけ
+        case localNetwork = 2   // Mac の外に出るが LAN 内
+        case external = 3       // この Mac とネットワークの外へ出る
+        case misconfigured = 4  // 設定エラー。通信を停止している
     }
 
-    public struct Destination: Sendable, Equatable {
-        public let dataKind: DataKind   // .audio | .transcript | .refinedText
+    /// 誰が運用している先か。**ユーザーの申告であり、アプリは検証できない。**
+    public enum OperatorKind: String, Codable, Sendable {
+        case selfHosted, vendor, unknown
+    }
+
+    public struct Destination: Equatable, Sendable {
+        public let dataKind: DataKind          // .audio | .transcript | .refinedText
         public let host: String
         public let port: Int
-        public let egressClass: EgressClass
-        public let providerID: ProviderID
+        public let reach: EgressClass          // 検証可能
+        public let operatorKind: OperatorKind  // 申告。表示のみ
+        public let providerID: String
         public let viaProxy: String?
     }
 
     public let level: Level
     public let destinations: [Destination]
 
+    /// 旗印そのもの。整形テキストの送信先が増えてもここは false のままでなければならない。
+    public var audioLeavesMachine: Bool {
+        destinations.contains { $0.dataKind == .audio && $0.reach > .loopback }
+    }
+
     /// 設定の純粋関数。I/O なし。完全にユニットテスト可能。
-    public static func evaluate(_ config: Config, issues: [ConfigIssue]) -> PrivacyPosture
+    public static func evaluate(_ settings: Settings, hasConfigError: Bool,
+                                reachResolver: (String) -> EgressClass) -> PrivacyPosture
 }
 ```
 
-`loopback` と `privateNetwork` を分けるのは step 1 で本質的である:
+### 申告は許可も表示レベルも緩めない
 
-- `http://127.0.0.1:1234/v1` は**本当に Mac から出ない**。旗印はそのまま成立する
-- `http://192.168.1.50:11434` は **Mac から出る** (同僚のデスクトップ上にある)。
-  別のラベルを付けて正直に表示しなければならない
+これが設計上の最重要ルールである。
 
-macOS 自身も同じ線を引いている: **`127.0.0.1` への接続はローカルネットワーク権限の
-プロンプトを出さないが、`192.168.x.x` は出す。**
+- `EgressGate` は `operatorKind` を**参照しない**。許可は `allowedEgressClasses` だけで決まる
+- **アイコンのレベルも到達範囲だけで決まる。** `api.openai.com` を `self-hosted` と
+  書いても、バッジは `.external` のまま
+
+申告で許可が広がると、**設定ファイルを書き換えられる攻撃者に送信経路を渡す**ことになる。
+`PrivacyPostureTests` の「ベンダーを self-hosted と申告してもアイコンは external のまま」が
+これを固定している。
+
+申告が変えてよいのは**文言だけ**である:
+
+```
+外部へ送信 — 整形テキスト → llm.example.co.jp（自社運用と設定）
+外部へ送信 — 整形テキスト → api.openai.com（外部サービス）
+```
+
+「と設定」という語尾は意図的で、**アプリが検証した事実ではなく設定値である**ことを示す。
+
+### macOS 側の挙動との対応
+
+- `127.0.0.1` への接続はローカルネットワーク権限のプロンプトを**出さない**
+- `10.x.x.x` / `192.168.x.x` への接続は**出す**（`NSLocalNetworkUsageDescription` が要る）
+- 公開 DNS 名への HTTPS は通常の外向き通信で、特別な権限は不要
+
+### DNS 自体が漏らす
+
+`llm.example.co.jp` を解決した時点で、その DNS サーバに
+「この Mac は LLM を探している」と伝わっている。
+**真にゼロ egress なのは、リテラル IP の loopback だけ。**
+姿勢レベルを分けているのは、この精度を保つためである。
 
 ### ゴールデンテスト — 旗印を CI の失敗にする
 
 ```swift
-@Test func 既定設定はオフラインである() {
-    let p = PrivacyPosture.evaluate(.default, issues: [])
-    #expect(p.level == .offline)
-    #expect(p.destinations.isEmpty)
-}
-
-@Test func 設定が壊れたら通信を全拒否する() {
-    #expect(snapshotForMalformedConfig == .denyAll)
-}
-
-@Test func クラウドSTTを選ぶと音声が出ることが表示される() { ... }
+@Test("既定設定はオフライン。送信先ゼロ")
+@Test("設定エラーなら通信を停止した状態になる")
+@Test("到達範囲の上限を超える設定は送信先として現れない")
+@Test("ベンダーを self-hosted と申告してもアイコンは external のまま")
+@Test("整形テキストの送信先が外部でも、音声は Mac から出ない")
 ```
+
+実装は `Tests/VoinpNetTests/PrivacyPostureTests.swift`。
 
 ## D.6 最も検証しやすい主張: サードパーティ依存ゼロ
 
@@ -363,13 +416,17 @@ cat Package.resolved
 
 ### メニューバーのアイコン = `PrivacyPosture.Level`、常時表示
 
-| Level | アイコン | メニューの見出し |
+| Level（到達範囲のみで決まる） | アイコン | メニューの見出し（運用主体の申告を文言に反映） |
 |---|---|---|
-| `.offline` | `mic.fill` モノクロ | 完全ローカル — 送信先なし |
+| `.offline` | `mic` モノクロ | 完全ローカル — 送信先なし |
 | `.loopbackOnly` | `mic.fill` + `house` バッジ | この Mac 内のみ — 整形テキスト → 127.0.0.1:1234 |
-| `.localNetwork` | 琥珀色バッジ | 社内ネットワーク — 整形テキスト → 192.168.1.50:11434 |
-| `.cloud` | `globe` 着色 | インターネット送信あり — 音声 → api.openai.com |
+| `.localNetwork` | 琥珀色バッジ | 社内ネットワーク — 整形テキスト → 10.1.2.3:443（自社運用と設定） |
+| `.external` | `globe` 着色 | 外部へ送信 — 整形テキスト → llm.example.co.jp（自社運用と設定） |
+| `.external` | `globe` 着色 | 外部へ送信 — 整形テキスト → api.openai.com（外部サービス） |
 | `.misconfigured` | `exclamationmark.triangle` | 設定エラー — 通信を停止しています |
+
+最後から 2 行目と 3 行目は**同じアイコン**である。
+自社運用の申告で見た目を優しくしない、というのがこの表の主張。
 
 加えて **リクエスト実行中はバッジをアニメーションさせる。**
 ユーザーが外向き通信の 1 本 1 本を*目で見られる*ようにする。

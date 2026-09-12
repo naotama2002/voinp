@@ -467,8 +467,15 @@ step 1 の全フィールド。step 2 で足すものはコメントで示す。
     "stripThinkTags": true,
 
     "openaiCompatible": {
+      // loopback / 社内 LAN / 社内 HTTPS サーバのいずれも指定できる
+      //   "http://127.0.0.1:1234/v1"      手元の LM Studio
+      //   "https://10.1.2.3/v1"           社内 LAN / VPN
+      //   "https://llm.example.co.jp/v1"  社内サーバ（到達範囲はインターネット経由）
       "baseURL": "http://127.0.0.1:1234/v1",  // 正規化後の値を保存する
       "model": "qwen3-8b-instruct",
+      // 誰が運用しているか。**表示専用の申告であり、送信許可は広げない。**
+      // 許可を決めるのは privacy.allowedEgressClasses（到達範囲）だけ。
+      "operatorKind": "self-hosted",          // "self-hosted" | "vendor"
       "requiresAPIKey": false,   // true なら Keychain から読む。キー本体はここに書かない
       "extraHeaders": {},        // Authorization 等は書けない (起動時に拒否)
       "extraBody": {}            // 例: {"chat_template_kwargs": {"enable_thinking": false}}
@@ -486,6 +493,9 @@ step 1 の全フィールド。step 2 で足すものはコメントで示す。
 
   "privacy": {
     "allowNetwork": false,                   // マスタースイッチ
+    // 到達範囲の上限。**強制に使う唯一の軸**。
+    // 社内サーバ (https://llm.example.co.jp) を使うなら publicInternet が必要になる。
+    // 「インターネットに送る」ではなく「この Mac とネットワークの外まで届く」の意味。
     "allowedEgressClasses": ["loopback"],    // "loopback" | "privateNetwork" | "publicInternet"
     "extraAllowlistHosts": [],
     "auditLog": { "enabled": true, "toDisk": true, "maxEntries": 500 },

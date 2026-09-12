@@ -5,7 +5,36 @@
 書き起こしテキストを LLM に通して、フィラー除去・句読点整形・明らかな誤認識の修正を行う。
 
 - **既定はオフ。** オンにしても送るのは *テキスト* であり *音声* ではない
-- step 1 の想定は **OpenAI 互換 API のローカル LLM** (LM Studio / Ollama / llama.cpp / vLLM)
+- step 1 の想定は **OpenAI 互換 API のセルフホスト LLM**
+
+### 「セルフホスト」は loopback とは限らない
+
+用語を分けておく。混同すると設計を誤る（実際に一度誤った）。
+
+| 語 | 意味 |
+|---|---|
+| **ローカル** | `127.0.0.1` / `::1`。この Mac の中 |
+| **セルフホスト** | 自社・自分で運用している。**置き場所は問わない** |
+
+step 1 で想定する接続先は 3 形態すべて:
+
+| 構成 | 例 | 到達範囲 |
+|---|---|---|
+| 手元の Mac | `http://127.0.0.1:1234/v1` (LM Studio / Ollama) | `loopback` |
+| 社内 LAN / VPN | `https://10.1.2.3/v1` | `privateNetwork` |
+| 社内サーバ | `https://llm.example.co.jp/v1` (vLLM 等) | **`publicInternet`** |
+
+3 行目は**自社運用でも到達範囲はインターネット経由**になる。
+プライバシー姿勢の表示と送信ゲートはこの区別を保つ（[06](06-privacy.md)）。
+
+設定にはどちらの軸も持つ:
+
+```jsonc
+"openaiCompatible": {
+  "baseURL": "https://llm.example.co.jp/v1",
+  "operatorKind": "self-hosted"   // 表示専用の申告。送信許可は広げない
+}
+```
 - **校正の失敗でユーザーの発話を失わない。** 何が起きても生原稿を挿入する
 
 プロンプトの中身は [04](04-prompts.md) を参照。ここでは通信と制御の話をする。
@@ -284,6 +313,27 @@ public enum ModelDiscoveryError: Error, Sendable {
 加えて**常に「モデル名を直接入力」のテキストフィールドを出す**。
 `/models` を実装していない社内ゲートウェイが存在する。
 
+## HTTPS 接続の扱い
+
+社内サーバを HTTPS で立てる構成が対象に入るので、TLS の前提を決めておく。
+
+- **サーバ証明書は公的 CA（Let's Encrypt 等）を前提とする。**
+  `URLSession` が標準で検証できるため、アプリ側に証明書まわりの実装は要らない
+- **証明書検証を無効化する設定は実装しない。** 「社内だから」という理由で
+  検証を切れる口を作ると、その設定は必ず残り続け、
+  中間者攻撃に対して書き起こしテキストが無防備になる。
+  自己署名証明書を使いたい場合は、**CA を System キーチェーンに入れる**のが正しい手順
+  （通常は MDM で配布する）
+- **証明書エラーは専用のエラー種別にする。** `tlsFailure` として扱い、
+  「サーバ証明書を検証できません。社内 CA を使用している場合は
+  System キーチェーンに追加してください」と案内する
+- **mTLS クライアント証明書は現時点で未対応。**
+  社内ゲートウェイが要求する場合は `URLSessionDelegate` の
+  `didReceive challenge` で対応することになるが、step 1 では実装しない
+
+平文 `http` を許すのは `loopback` と `privateNetwork` に対してのみで、
+公開ホストへの平文は常に拒否する（[06](06-privacy.md) の判定順 5）。
+
 ## ストリーミングはしない
 
 **推奨: 非ストリーミング。SSE は実装しない。**
@@ -399,7 +449,10 @@ c.httpAdditionalHeaders = ["User-Agent": "voinp/\(version)"]   // 識別情報�
 
   "openaiCompatible": {
     "baseURL": "http://127.0.0.1:1234/v1",  // 正規化後の値
+                                            // 例: "https://llm.example.co.jp/v1" も可
     "model": "qwen3-8b-instruct",
+    "operatorKind": "self-hosted",          // "self-hosted" | "vendor"
+                                            // 表示専用の申告。送信許可は広げない
     "requiresAPIKey": false,                // true なら Keychain から読む
     "extraHeaders": {},                     // Authorization 等は書けない (起動時に拒否)
     "extraBody": {}

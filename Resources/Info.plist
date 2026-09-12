@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>__BUNDLE_ID__</string>
+	<key>CFBundleExecutable</key>
+	<string>voinp</string>
+	<key>CFBundleName</key>
+	<string>Voinp</string>
+	<key>CFBundleDisplayName</key>
+	<string>Voinp</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>__VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__BUILD__</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+
+	<!-- メニューバー常駐。Dock アイコンもアプリメニューも出さない。 -->
+	<key>LSUIElement</key>
+	<true/>
+
+	<!-- これが無いと最初の AVAudioEngine.start() でプロセスが kill される（拒否ではなく kill）。 -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>音声入力のためにマイクを使用します。音声はこの Mac 上で処理され、保存されません。</string>
+
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>ローカル LLM に接続して文章を校正するために使用します。設定で明示的に有効にした場合のみ通信します。</string>
+
+	<!-- loopback / RFC1918 / *.local への平文 http のみ許可。ArbitraryLoads は絶対に書かない。 -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

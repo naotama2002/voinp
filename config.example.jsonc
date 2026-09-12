@@ -1,0 +1,79 @@
+{
+  // 必ず先頭。マイグレーション判定に使う。
+  "schemaVersion": 1,
+
+  "hotkey": {
+    "binding": "ctrl+opt+space",   // "rightCommand" / "fn" / "doubleTap:rightCommand" も可
+    "behavior": "hybrid",          // "hold" | "toggle" | "hybrid"
+    "holdThresholdMs": 200,        // hybrid のホールド判定
+    "cancelKey": "escape"
+  },
+
+  "audio": {
+    "inputDeviceUID": null,        // null = システム既定の入力デバイス
+    "playFeedbackSounds": true,
+    "maxRecordingSeconds": 120,    // 安全弁。超過時は自動確定
+    "minRecordingMs": 250          // これ未満はキャンセル扱い (空挿入を防ぐ)
+  },
+
+  "transcription": {
+    "provider": "apple.speechanalyzer",   // step2: "openai.whisper" | "deepgram" ...
+    "module": "dictation",                // "dictation" | "transcription" (02 のスパイクで確定)
+    "locale": "ja-JP",
+    "reserveLocales": ["ja-JP", "en-US"], // 未予約だと OS が資産を削除しうる
+    "modelRetention": "processLifetime",  // "whileInUse" | "lingering" | "processLifetime"
+    "showPartialResults": true,
+    "punctuation": "automatic",           // "automatic" | "off"
+    "termHints": ["kintone", "サイボウズ", "Garoon", "voinp"],
+    "termHintsFile": null                 // 大きい辞書は 1 行 1 語の別ファイルへ
+  },
+
+  "refinement": {
+    "enabled": false,                      // 既定オフ
+    "provider": "openai-compatible",       // "none" | "openai-compatible" | "apple.foundationmodels"
+    "defaultPresetID": "clean",
+    "softDeadlineMs": 1500,
+    "hardDeadlineMs": 4000,
+    "maxRetries": 1,
+    "disableAfterConsecutiveFailures": 3,
+    "temperature": 0.1,
+    "maxOutputTokens": 1024,
+    "stripThinkTags": true,
+
+    "openaiCompatible": {
+      "baseURL": "http://127.0.0.1:1234/v1",  // 正規化後の値を保存する
+      "model": "qwen3-8b-instruct",
+      "requiresAPIKey": false,   // true なら Keychain から読む。キー本体はここに書かない
+      "extraHeaders": {},        // Authorization 等は書けない (起動時に拒否)
+      "extraBody": {}            // 例: {"chat_template_kwargs": {"enable_thinking": false}}
+    }
+  },
+
+  "insertion": {
+    "strategy": "paste",           // "paste" | "accessibility" | "keystroke" | "auto"
+    "restoreClipboard": true,
+    "pasteRestoreDelayMs": 250,
+    "pasteKeyCode": null,          // null = 現在のレイアウトから "v" を逆引き
+    "trailingSpace": false,
+    "overrides": {}                // 例: {"com.microsoft.VSCode": {"pasteRestoreDelayMs": 450}}
+  },
+
+  "privacy": {
+    "allowNetwork": false,                   // マスタースイッチ
+    "allowedEgressClasses": ["loopback"],    // "loopback" | "privateNetwork" | "publicInternet"
+    "extraAllowlistHosts": [],
+    "auditLog": { "enabled": true, "toDisk": true, "maxEntries": 500 },
+    "updateCheck": "never"                   // "never" | "manual"。"auto" は存在しない
+  },
+
+  "history": {
+    "keepLastTranscripts": 0       // 既定 0 = 保存しない
+  },
+
+  "ui": {
+    "showMenuBarPrivacyIndicator": true,
+    "hudPosition": "bottomCenter", // "bottomCenter" | "hidden"
+    "hudShowText": true            // false にすると認識テキストを HUD に出さない
+                                   // （画面共有中に内容を見せたくない場合）
+  }
+}

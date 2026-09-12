@@ -1,0 +1,13 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: ビルド
+        run: swift build
+      - name: テスト（権限ゼロ・マイクなしで通ること）
+        run: swift test
+      - name: プライバシー保証の検証
+        run: ./scripts/verify-privacy.sh

@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreMedia
 import Foundation
 import Speech
 import VoinpCore
@@ -145,8 +146,15 @@ actor AppleSpeechSession: TranscriptionSession {
                 for try await result in transcriber.results {
                     let text = String(result.text.characters)
                     // isFinal が確定/暫定の判別のすべて。手で volatile range を追う必要はない。
-                    cont.yield(result.isFinal ? .finalized(TranscriptSegment(text: text))
-                                              : .partial(text))
+                    if result.isFinal {
+                        // **音声区間を必ず渡す。** 渡さないと TranscriptBuffer の
+                        // 重複排除が働かず、エンジンが同じ区間を再確定してきたときに
+                        // 文が二重になる。
+                        cont.yield(.finalized(TranscriptSegment(
+                            text: text, audioRange: Self.durationRange(result.range))))
+                    } else {
+                        cont.yield(.partial(text))
+                    }
                 }
                 cont.finish()
             } catch {
@@ -186,6 +194,15 @@ actor AppleSpeechSession: TranscriptionSession {
         await analyzer.cancelAndFinishNow()
         resultTask?.cancel()
         eventContinuation.finish()
+    }
+
+    /// `CMTimeRange` を `ClosedRange<Duration>` に落とす。
+    /// 不正な値（未確定など）は nil にして、時刻なしとして扱わせる。
+    private static func durationRange(_ r: CMTimeRange) -> ClosedRange<Duration>? {
+        let start = r.start.seconds
+        let end = r.end.seconds
+        guard start.isFinite, end.isFinite, start >= 0, end >= start else { return nil }
+        return Duration.seconds(start)...Duration.seconds(end)
     }
 
     private static func buffer(from chunk: AudioChunk, format: AVAudioFormat) -> AVAudioPCMBuffer? {

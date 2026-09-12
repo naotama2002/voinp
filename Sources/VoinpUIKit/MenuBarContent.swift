@@ -17,8 +17,14 @@ struct MenuBarContent: View {
                 Button("キャンセル") { model.cancelDictation() }
             }
         } else {
+            // 何をなぜ求めているかを先に出し、操作は 2 段に分ける。
+            // 「許可する」= OS のダイアログ、「システム設定を開く」= 手動での付与。
             ForEach(model.missingPermissions, id: \.self) { p in
-                Button(label(for: p)) { model.requestPermission(p) }
+                Section(title(for: p)) {
+                    Text(model.permissionExplanation(p))
+                    Button("許可する…") { model.requestPermission(p) }
+                    Button("システム設定を開く") { model.openSettings(for: p) }
+                }
             }
         }
 
@@ -36,10 +42,10 @@ struct MenuBarContent: View {
             .keyboardShortcut("q")
     }
 
-    private func label(for p: SessionError.Permission) -> String {
+    private func title(for p: SessionError.Permission) -> String {
         switch p {
-        case .microphone:    "マイクを許可する…"
-        case .accessibility: "アクセシビリティを許可する…"
+        case .microphone:    "マイクが未許可"
+        case .accessibility: "アクセシビリティが未許可"
         }
     }
 

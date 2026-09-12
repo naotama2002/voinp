@@ -44,8 +44,35 @@ public enum Permissions {
         case accessibility = "Privacy_Accessibility"
         case microphone = "Privacy_Microphone"
 
+        /// macOS 26 の設定は ExtensionKit 化されている。
+        /// 旧 `com.apple.preference.security` も互換で残っているが、
+        /// 目的のセクションに正しく飛ばないことがあるので新しい方を使う
+        /// （`SecurityPrivacyExtension.appex` の bundle id を実機で確認済み）。
         public var url: URL {
-            URL(string: "x-apple.systempreferences:com.apple.preference.security?\(rawValue)")!
+            URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?\(rawValue)")!
+        }
+    }
+
+    /// マイク許可を求めるときに何が起きるか。UI の分岐に使う。
+    public enum MicrophoneRequestOutcome: Sendable {
+        case granted
+        /// OS のダイアログを出せた。ユーザーの応答待ち。
+        case promptShown
+        /// 既に拒否済みでダイアログは出ない。設定を開くしかない。
+        case mustUseSettings
+    }
+
+    /// 状態に応じて「ダイアログを出す」か「設定を開くしかない」かを返す。
+    ///
+    /// 未決定ならダイアログが出るので、**そこで設定も同時に開いてはいけない**
+    /// （ダイアログの上に設定画面が被さって何が起きたか分からなくなる）。
+    public static func requestMicrophoneIfPossible() async -> MicrophoneRequestOutcome {
+        switch microphoneStatus {
+        case .authorized: return .granted
+        case .notDetermined:
+            return await requestMicrophone() ? .granted : .promptShown
+        default:
+            return .mustUseSettings
         }
     }
 }

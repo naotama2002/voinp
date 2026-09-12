@@ -111,3 +111,39 @@ struct SessionMachineTests {
         #expect(m.phase == .arming)
     }
 }
+
+@Suite("SessionMachine — モデル取得")
+struct SessionMachineModelTests {
+    let target = InsertionTarget(bundleIdentifier: "x", processIdentifier: 1, isSecureInput: false)
+
+    @Test("モデル未取得なら実際に取得を開始する（進捗表示だけで止まらない）")
+    func startsDownloadNotJustProgress() {
+        var m = SessionMachine()
+        let t = ContinuousClock.now
+        _ = m.handle(.startRequested(target: target), at: t)
+        let actions = m.handle(.modelProgress(0), at: t)
+        #expect(actions.contains(.installModel),
+                "phase を変えるだけでは永久にダウンロードが始まらない")
+    }
+
+    @Test("取得中の進捗更新では二重に開始しない")
+    func doesNotRestartDownload() {
+        var m = SessionMachine()
+        let t = ContinuousClock.now
+        _ = m.handle(.startRequested(target: target), at: t)
+        _ = m.handle(.modelProgress(0), at: t)
+        let again = m.handle(.modelProgress(0.5), at: t)
+        #expect(!again.contains(.installModel))
+    }
+
+    @Test("取得完了で録音準備に戻る")
+    func readyResumesCapture() {
+        var m = SessionMachine()
+        let t = ContinuousClock.now
+        _ = m.handle(.startRequested(target: target), at: t)
+        _ = m.handle(.modelProgress(0), at: t)
+        let actions = m.handle(.modelReady, at: t)
+        #expect(m.phase == .arming)
+        #expect(actions.contains(.startCapture(target)))
+    }
+}

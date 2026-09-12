@@ -51,7 +51,13 @@ public struct SessionMachine: Sendable {
             return []
 
         // ── モデル初回ダウンロード ────────────────────────────
-        case (.arming, .modelProgress(let p)), (.installingModel, .modelProgress(let p)):
+        // arming から入るのが初回。ここで実際に取得を始めないと、
+        // 進捗 0% の表示のまま永久に何も起きない。
+        case (.arming, .modelProgress(let p)):
+            phase = .installingModel(progress: p)
+            return [.installModel]
+
+        case (.installingModel, .modelProgress(let p)):
             phase = .installingModel(progress: p)
             return []
 

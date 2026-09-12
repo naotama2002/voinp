@@ -115,14 +115,43 @@ public final class AppModel {
         missingPermissions = Permissions.missingPermissions()
     }
 
+    /// 許可を求める。**OS のダイアログと設定画面を同時に出さない。**
+    /// 両方出すと、ダイアログの上に設定が被さって何が起きたのか分からなくなる。
     public func requestPermission(_ p: SessionError.Permission) {
         switch p {
         case .microphone:
-            Task { _ = await Permissions.requestMicrophone(); refreshPermissions() }
-            NSWorkspace.shared.open(Permissions.SettingsPane.microphone.url)
+            Task {
+                switch await Permissions.requestMicrophoneIfPossible() {
+                case .granted, .promptShown:
+                    // OS のダイアログに任せる。設定は開かない。
+                    refreshPermissions()
+                case .mustUseSettings:
+                    // 拒否済みなのでダイアログは二度と出ない。設定を開くしかない。
+                    openSettings(for: .microphone)
+                }
+            }
         case .accessibility:
+            // Apple のダイアログ自体に「システム設定を開く」ボタンが付いている。
+            // こちらから重ねて開かない。
             Permissions.requestAccessibility()
-            NSWorkspace.shared.open(Permissions.SettingsPane.accessibility.url)
+            refreshPermissions()
+        }
+    }
+
+    /// 明示的に設定画面を開く。メニューの別項目として出す。
+    public func openSettings(for p: SessionError.Permission) {
+        let pane: Permissions.SettingsPane = switch p {
+        case .microphone: .microphone
+        case .accessibility: .accessibility
+        }
+        NSWorkspace.shared.open(pane.url)
+    }
+
+    /// 許可の説明文。何をなぜ求めているかを先に伝える。
+    public func permissionExplanation(_ p: SessionError.Permission) -> String {
+        switch p {
+        case .microphone:    "音声を認識するために必要です。音声はこの Mac 上でのみ処理されます。"
+        case .accessibility: "ホットキーの検出と、他のアプリへのテキスト挿入に必要です。"
         }
     }
 

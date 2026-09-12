@@ -41,7 +41,10 @@ public struct SetupView: View {
             footer
         }
         .frame(width: 560, height: 420)
-        .task { await model.refreshModelReadiness() }
+        .task {
+            await model.refreshModelReadiness()
+            jumpToFirstUnsatisfied()
+        }
         .onChange(of: model.missingPermissions) { advanceIfSatisfied() }
         .onChange(of: model.modelReadiness) { advanceIfSatisfied() }
     }
@@ -323,6 +326,19 @@ public struct SetupView: View {
         case .speechModel: model.modelReadiness == .ready
         case .ready: false
         }
+    }
+
+    /// 開いたときに、まだ済んでいない手順があればそこへ飛ぶ。
+    ///
+    /// 権限が欠けている状態で「ようこそ」から緑のステップを順に
+    /// クリックさせる意味はない。すぐ問題の箇所に着かせる。
+    /// 全部済んでいる場合は「ようこそ」のままにする
+    /// （初回はアプリの説明を読ませたいし、自分で開いた人には害がない）。
+    private func jumpToFirstUnsatisfied() {
+        guard step == .welcome,
+              let first = Step.allCases.first(where: { $0 != .ready && !isSatisfied($0) })
+        else { return }
+        step = first
     }
 
     /// いまのステップが満たされたら自動で次へ。

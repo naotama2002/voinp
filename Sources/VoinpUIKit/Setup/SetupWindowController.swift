@@ -58,6 +58,12 @@ final class SetupWindowController: NSObject, NSWindowDelegate {
         guard isOpen else { return }
         isOpen = false
         policy.windowDidClose()
+
+        // **閉じ方を問わず「見た」とみなす。**
+        // 「はじめる」を押したときだけ立てていたので、
+        // 条件が揃っていても毎回ウィザードが出ていた。
+        // 未完了なら needsSetup 側で再提示されるので、これで取りこぼさない。
+        model.hasSeenSetup = true
     }
 
     /// アクセサリアプリのウィンドウは activate しないと他のウィンドウの背後に開く。

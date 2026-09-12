@@ -57,7 +57,7 @@ public final class AppModel {
         })
 
         Log.session.info("起動: 権限不足 \(self.missingPermissions.count, privacy: .public) 件")
-        startHotkeyIfPossible()
+        refreshPermissions()
         Task { await refreshModelReadiness() }
 
         // AXIsProcessTrusted はプロセスごとに初回問い合わせ時点でキャッシュされる。
@@ -67,11 +67,20 @@ public final class AppModel {
         }
     }
 
-    private func startHotkeyIfPossible() {
-        guard hotkey == nil,
-              let combo = KeyCombo(string: settings.hotkey.binding),
-              Permissions.isAccessibilityTrusted
-        else { return }
+    private var lastTapAttempt: ContinuousClock.Instant?
+
+    /// tap の作成を試みる。**これ自体が許可の判定になる。**
+    /// 毎秒作り直すのは無駄なので、失敗したときは間隔を空けて再試行する。
+    @discardableResult
+    private func startHotkeyIfPossible() -> Bool {
+        if hotkey != nil { return true }
+        guard let combo = KeyCombo(string: settings.hotkey.binding) else { return false }
+
+        let now = ContinuousClock.now
+        if let last = lastTapAttempt, now - last < .seconds(2) {
+            return false   // 直近に試して失敗している。状態は据え置き。
+        }
+        lastTapAttempt = now
 
         let behavior = HotkeyInterpreter.Behavior(rawValue: settings.hotkey.behavior) ?? .hybrid
         let source = EventTapHotkeySource(config: .init(
@@ -84,16 +93,13 @@ public final class AppModel {
                     await self?.coordinator?.handle(command: command)
                 }
             })
+            return true
         } catch {
-            lastError = "ホットキーを登録できませんでした"
+            return false
         }
     }
 
-    private func pollPermissions() {
-        let before = missingPermissions
-        refreshPermissions()
-        if before != missingPermissions { startHotkeyIfPossible() }
-    }
+    private func pollPermissions() { refreshPermissions() }
 
     // MARK: - 更新の反映（switch 1 つ）
 
@@ -121,8 +127,20 @@ public final class AppModel {
 
     // MARK: - 権限
 
+    /// 許可の判定。
+    ///
+    /// アクセシビリティは `AXIsProcessTrusted()` を見ない。
+    /// あのフラグはプロセス内でキャッシュされ、システム設定で許可しても
+    /// 再起動するまで false のままになることがある。
+    /// **実際に event tap を作れたかどうか**で判定すれば、その問題を回避できる。
     public func refreshPermissions() {
-        missingPermissions = Permissions.missingPermissions()
+        var missing: [SessionError.Permission] = []
+        if Permissions.microphoneStatus != .authorized { missing.append(.microphone) }
+        if !startHotkeyIfPossible() { missing.append(.accessibility) }
+        if missing != missingPermissions {
+            Log.session.info("権限状態が変化: 不足 \(missing.count, privacy: .public) 件")
+            missingPermissions = missing
+        }
     }
 
     // MARK: - 音声モデル
@@ -194,6 +212,20 @@ public final class AppModel {
             // こちらから重ねて開かない。
             Permissions.requestAccessibility()
             refreshPermissions()
+        }
+    }
+
+    /// アプリを再起動する。
+    ///
+    /// tap の作成で判定しているので通常は不要だが、
+    /// TCC のキャッシュが残る経路が他にもありうるので確実な逃げ道を残す。
+    /// 再起動してもセットアップウィザードに戻ってくる。
+    public func relaunch() {
+        let url = Bundle.main.bundleURL
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in
+            Task { @MainActor in NSApplication.shared.terminate(nil) }
         }
     }
 

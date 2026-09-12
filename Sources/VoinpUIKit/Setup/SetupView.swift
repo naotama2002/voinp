@@ -104,6 +104,9 @@ public struct SetupView: View {
 
                 システム設定が開いたら、リストから Voinp を探して
                 スイッチをオンにしてください。
+
+                macOS が再起動を促してきた場合は、再起動して問題ありません。
+                起動し直すとこの画面に戻ってきます。
                 """)
 
         case .speechModel:
@@ -145,6 +148,15 @@ public struct SetupView: View {
                 }
                 Text("許可すると自動的に次へ進みます。")
                     .font(.system(size: 11)).foregroundStyle(.tertiary)
+
+                if p == .accessibility {
+                    HStack(spacing: 6) {
+                        Text("許可したのに反映されない場合は")
+                        Button("Voinp を再起動") { model.relaunch() }
+                            .buttonStyle(.link)
+                    }
+                    .font(.system(size: 11)).foregroundStyle(.tertiary)
+                }
             }
             Spacer()
         }
@@ -244,7 +256,9 @@ public struct SetupView: View {
                         .buttonStyle(.borderedProminent)
                         .keyboardShortcut(.defaultAction)
                 } else {
-                    Button("あとで") { move(1) }
+                    // 「あとで」だと、許可済みなのに状態を読めていないのか
+                    // 本当に未許可なのか区別がつかない。何が起きるかを書く。
+                    Button("この手順を飛ばす") { move(1) }
                 }
             }
         }

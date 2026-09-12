@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import Synchronization
 import VoinpCore
 
 /// `CGEvent.tapCreate` で全体ホットキーを取る。
@@ -57,11 +58,14 @@ public final class EventTapHotkeySource: @unchecked Sendable {
 
     // MARK: - 起動 / 停止
 
+    /// `AXIsProcessTrusted()` で事前にゲートしない。
+    ///
+    /// あのフラグは**プロセス内でキャッシュされる**ため、システム設定で許可しても
+    /// アプリを再起動するまで false を返し続けることがある
+    /// （macOS 自身が「再起動しますか」と聞くのはこのため）。
+    /// `tapCreate` はウィンドウサーバへの実際の要求なので現在の状態を反映する。
+    /// **作れたかどうかを許可の判定そのものに使う。**
     public func start() throws {
-        guard Permissions.isAccessibilityTrusted else {
-            Log.hotkey.error("アクセシビリティ未許可のため tap を作成できません")
-            throw VoinpError.accessibilityNotGranted
-        }
         guard thread == nil else { return }
 
         // tap のコールバックはイベント配送経路の中で同期的に走る。
@@ -71,8 +75,20 @@ public final class EventTapHotkeySource: @unchecked Sendable {
         t.name = "voinp.hotkey-tap"
         t.qualityOfService = .userInteractive
         thread = t
+        startResult.withLock { $0 = nil }
         t.start()
+
+        // tap の作成はスレッド上で行うので、結果が出るまで短く待つ。
+        // 作れなければ「未許可」として呼び出し側に伝える。
+        _ = startSignal.wait(timeout: .now() + .milliseconds(500))
+        if startResult.withLock({ $0 }) != true {
+            thread = nil
+            throw VoinpError.accessibilityNotGranted
+        }
     }
+
+    private let startSignal = DispatchSemaphore(value: 0)
+    private let startResult = Mutex<Bool?>(nil)
 
     public func stop() {
         if let src = runLoopSource, let rl = threadRunLoop {
@@ -101,9 +117,16 @@ public final class EventTapHotkeySource: @unchecked Sendable {
                 return me.handle(type: type, event: event)
             },
             userInfo: refcon
-        ) else { return }
+        ) else {
+            Log.hotkey.debug("tap を作成できない（アクセシビリティ未許可）")
+            startResult.withLock { $0 = false }
+            startSignal.signal()
+            return
+        }
 
         Log.hotkey.info("event tap を開始")
+        startResult.withLock { $0 = true }
+        startSignal.signal()
         tap = machPort
         let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, machPort, 0)
         runLoopSource = src

@@ -175,3 +175,48 @@ struct KeyComboRealKeyTests {
         #expect(parsed?.keyCode == code, "キーコードが保たれること")
     }
 }
+
+@Suite("HotkeyInterpreter — 誤爆しないこと")
+struct HotkeyFalsePositiveTests {
+
+    /// 右Shift + fn を登録したとき、別のキーで発動してはいけない。
+    private func makeRightShiftFn() -> HotkeyInterpreter {
+        let combo = KeyCombo(keyCode: nil, modifiers: [.rightShift, .function])
+        return HotkeyInterpreter(combo: combo, behavior: .hybrid)
+    }
+
+    @Test("左Shift + fn では発動しない（右Shift を登録している）")
+    func leftShiftDoesNotTrigger() {
+        var i = makeRightShiftFn()
+        let d = i.handle(RawKeyEvent(kind: .flagsChanged, keyCode: 0x38,
+                                     modifiers: [.leftShift, .function]), at: .now)
+        #expect(d.command == nil, "左右を区別できていない")
+    }
+
+    @Test("右Shift + fn で発動する")
+    func rightShiftTriggers() {
+        var i = makeRightShiftFn()
+        let d = i.handle(RawKeyEvent(kind: .flagsChanged, keyCode: 0x3C,
+                                     modifiers: [.rightShift, .function]), at: .now)
+        #expect(d.command == .start)
+    }
+
+    @Test("fn だけでは発動しない")
+    func fnAloneDoesNotTrigger() {
+        var i = makeRightShiftFn()
+        let d = i.handle(RawKeyEvent(kind: .flagsChanged, keyCode: 0x3F,
+                                     modifiers: [.function]), at: .now)
+        #expect(d.command == nil)
+    }
+
+    @Test("無関係な ctrl+opt+space では発動しない")
+    func unrelatedComboDoesNotTrigger() {
+        var i = makeRightShiftFn()
+        let d1 = i.handle(RawKeyEvent(kind: .flagsChanged, keyCode: 0x3B,
+                                      modifiers: [.leftControl, .leftOption]), at: .now)
+        let d2 = i.handle(RawKeyEvent(kind: .keyDown, keyCode: 0x31,
+                                      modifiers: [.leftControl, .leftOption]), at: .now)
+        #expect(d1.command == nil)
+        #expect(d2.command == nil)
+    }
+}

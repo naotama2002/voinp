@@ -31,6 +31,7 @@ public actor DictationCoordinator {
     private var pumpTask: Task<Void, Never>?
     private var resultTask: Task<Void, Never>?
     private var lastLevelEmit = ContinuousClock.now
+    private var levelEmitCount = 0
 
     public init(settings: Settings,
                 provider: any TranscriptionProvider,
@@ -40,7 +41,9 @@ public actor DictationCoordinator {
         self.provider = provider
         self.inserter = inserter
         self.refine = refine
-        let parts = AsyncStream<Update>.makeStream(bufferingPolicy: .bufferingNewest(16))
+        // 音量は 20Hz で流れるので、phase や snapshot と同じ流れに乗せると
+        // bufferingNewest で捨てられやすい。多めに確保する。
+        let parts = AsyncStream<Update>.makeStream(bufferingPolicy: .bufferingNewest(64))
         self.updates = parts.stream
         self.updateContinuation = parts.continuation
     }
@@ -188,6 +191,7 @@ public actor DictationCoordinator {
         }
 
         buffer.reset()
+        levelEmitCount = 0
         do {
             let s = try await provider.startSession(request)
             session = s
@@ -233,6 +237,11 @@ public actor DictationCoordinator {
         let now = ContinuousClock.now
         guard now - lastLevelEmit >= .milliseconds(50) else { return }
         lastLevelEmit = now
+        levelEmitCount += 1
+        // 診断用: 最初の数回だけ実測値を残す。波形が動かないときの切り分けに使う。
+        if levelEmitCount <= 3 {
+            Log.audio.info("音量: \(level, privacy: .public)")
+        }
         updateContinuation.yield(.level(level))
     }
 

@@ -70,11 +70,17 @@ struct PasteboardRestoreTests {
 }
 
 @Suite("PasteInserter")
+@MainActor
 struct PasteInserterTests {
     @Test("⌘V のキーコードを現在のレイアウトから逆引きできる")
     func resolvesVKeyCode() {
+        // TSMGetInputSourceProperty はメインキューを要求するので @MainActor で呼ぶ。
         let code = PasteInserter.virtualKeyCodeForV()
         #expect(code != nil, "レイアウトから 'v' を解決できること")
-        #expect(code == 0x09 || code != nil, "QWERTY なら 0x09、それ以外でも何か返ること")
+    }
+
+    @Test("設定で上書きした場合はそれを使う")
+    func overrideWins() {
+        #expect(PasteInserter.resolvedPasteKeyCode(override: 42) == 42)
     }
 }

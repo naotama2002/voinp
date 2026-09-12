@@ -112,11 +112,29 @@ public actor AudioCapture {
 
     // MARK: - ヘルパ
 
+    /// 音量（RMS）。HUD の波形表示に使う。
+    ///
+    /// **Float32 と Int16 の両方を扱うこと。** tap のフォーマットは
+    /// ハードウェア次第で、Int16 のときに floatChannelData だけ見ると
+    /// 常に 0 が返り、波形が動かなくなる。
     private static func rms(_ b: AVAudioPCMBuffer) -> Float {
-        guard let ch = b.floatChannelData?[0], b.frameLength > 0 else { return 0 }
-        var sum: Float = 0
-        for i in 0..<Int(b.frameLength) { sum += ch[i] * ch[i] }
-        return (sum / Float(b.frameLength)).squareRoot()
+        let frames = Int(b.frameLength)
+        guard frames > 0 else { return 0 }
+
+        if let ch = b.floatChannelData?[0] {
+            var sum: Float = 0
+            for i in 0..<frames { sum += ch[i] * ch[i] }
+            return (sum / Float(frames)).squareRoot()
+        }
+        if let ch = b.int16ChannelData?[0] {
+            var sum: Float = 0
+            for i in 0..<frames {
+                let v = Float(ch[i]) / Float(Int16.max)
+                sum += v * v
+            }
+            return (sum / Float(frames)).squareRoot()
+        }
+        return 0
     }
 
     private static func data(from b: AVAudioPCMBuffer) -> Data? {

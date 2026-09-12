@@ -61,20 +61,25 @@ struct KeyRecorderView: View {
 
     private func handle(_ event: NSEvent) -> Bool {
         guard isRecording else { return false }
-        let mods = Modifiers(nsFlags: event.modifierFlags)
 
         switch event.type {
         case .keyDown:
             if event.keyCode == 0x35 { stop(); return true }   // esc
+            // 非修飾キーとの組み合わせでは、押されている修飾キーの
+            // 左右を個別に追えないので peak（flagsChanged で集めたもの）を優先する。
+            let mods = peak.isEmpty ? Modifiers(nsFlags: event.modifierFlags) : peak
             commit(KeyCombo(keyCode: event.keyCode, modifiers: mods))
             return true
 
         case .flagsChanged:
-            if mods.isEmpty {
-                // すべて離された。非修飾キーが来ていなければ修飾キー単独の和音として確定する。
+            // **左右の判別は keyCode で行う。**
+            // NSEvent.ModifierFlags は左右を区別しないため、
+            // フラグだけ見ると右 Shift が左として記録される。
+            if event.modifierFlags.isEmpty {
+                // すべて離された。非修飾キーが来ていなければ修飾キー単独の和音として確定。
                 if !peak.isEmpty { commit(KeyCombo(keyCode: nil, modifiers: peak)) }
-            } else {
-                peak.formUnion(mods)
+            } else if let pressed = Modifiers.fromModifierKeyCode(event.keyCode) {
+                peak.formUnion(pressed)
             }
             return true
 
@@ -123,6 +128,26 @@ struct KeyRecorderView: View {
 }
 
 extension Modifiers {
+    /// 修飾キーの仮想キーコード。
+    /// `NSEvent.ModifierFlags` は左右を区別しないので、
+    /// `flagsChanged` の keyCode を見て判定する必要がある。
+    static func fromModifierKeyCode(_ keyCode: UInt16) -> Modifiers? {
+        switch keyCode {
+        case 0x3B: .leftControl
+        case 0x3E: .rightControl
+        case 0x38: .leftShift
+        case 0x3C: .rightShift
+        case 0x3A: .leftOption
+        case 0x3D: .rightOption
+        case 0x37: .leftCommand
+        case 0x36: .rightCommand
+        case 0x3F: .function
+        default: nil
+        }
+    }
+
+    /// 左右が判らない場合のフォールバック（keyDown 時の修飾キー状態など）。
+    /// **`flagsChanged` ではこちらを使わない。** 右 Shift が左として記録される。
     init(nsFlags f: NSEvent.ModifierFlags) {
         var m: Modifiers = []
         if f.contains(.control)  { m.insert(.leftControl) }

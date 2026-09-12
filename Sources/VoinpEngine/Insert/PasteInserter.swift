@@ -45,7 +45,11 @@ public actor PasteInserter: TextInserter {
         let ours = await MainActor.run { pasteboard.clearAndWrite(text, concealed: true) }
         Log.insert.info("ペーストボードに書き込み: \(text.count, privacy: .public)文字 bundle=\(target.bundleIdentifier ?? "?", privacy: .public)")
 
-        try postCommandV()
+        // **キーコードの解決は main actor で行う。**
+        // TSMGetInputSourceProperty は内部で dispatch_assert_queue(main) を呼ぶため、
+        // actor のスレッドから触るとクラッシュする（実際に落ちた）。
+        let keyCode = await MainActor.run { Self.resolvedPasteKeyCode(override: overrideKeyCode) }
+        try postCommandV(keyCode: keyCode)
 
         try? await Task.sleep(for: .milliseconds(restoreDelayMs))
 
@@ -63,8 +67,8 @@ public actor PasteInserter: TextInserter {
 
     /// ⌘ の down/up を別イベントとして送らない。V のイベントに `.maskCommand` を立てるだけ。
     /// 素の ⌘ keyDown はアプリによってはメニューを開いてしまう。
-    private func postCommandV() throws {
-        let v = CGKeyCode(overrideKeyCode ?? Self.virtualKeyCodeForV() ?? kVK_ANSI_V)
+    private func postCommandV(keyCode: CGKeyCode) throws {
+        let v = keyCode
         let src = CGEventSource(stateID: .hidSystemState)
         guard let down = CGEvent(keyboardEventSource: src, virtualKey: v, keyDown: true),
               let up = CGEvent(keyboardEventSource: src, virtualKey: v, keyDown: false)
@@ -80,8 +84,24 @@ public actor PasteInserter: TextInserter {
         up.post(tap: .cghidEventTap)
     }
 
+    /// ⌘V に使うキーコードを解決する。
+    ///
+    /// **main actor 専用。** `TSMGetInputSourceProperty` がメインキューを要求する。
+    /// 一度解決したら使い回す（毎回のレイアウト走査は無駄）。
+    @MainActor
+    static func resolvedPasteKeyCode(override: Int?) -> CGKeyCode {
+        if let override { return CGKeyCode(override) }
+        if let cached = cachedPasteKeyCode { return cached }
+        let resolved = CGKeyCode(virtualKeyCodeForV() ?? kVK_ANSI_V)
+        cachedPasteKeyCode = resolved
+        return resolved
+    }
+
+    @MainActor private static var cachedPasteKeyCode: CGKeyCode?
+
     /// `kVK_ANSI_V = 0x09` は**物理**キーコードでレイアウト依存。
     /// Dvorak では 0x09 の物理キーは "v" ではないので、現在のレイアウトから逆引きする。
+    @MainActor
     static func virtualKeyCodeForV() -> Int? {
         guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
               let ptr = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)

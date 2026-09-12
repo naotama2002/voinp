@@ -105,9 +105,12 @@ private struct WaveformView: View {
 
     private func height(_ i: Int) -> CGFloat {
         guard active else { return 3 }
+        // 音声の RMS は 0.01〜0.2 程度の狭い範囲に収まるので、
+        // 線形に倍率を掛けるとほとんど動かない。対数で伸ばす。
+        let db = 20 * log10(max(Double(level), 1e-4))      // -80dB 〜 0dB
+        let normalized = max(0, min(1, (db + 60) / 60))     // -60dB を下限に 0..1
         // 中央ほど大きく振れるように見せる
         let center = 1 - abs(Double(i) - 13.5) / 13.5
-        let amp = CGFloat(min(1, level * 8)) * CGFloat(center)
-        return max(3, amp * 22)
+        return max(3, CGFloat(normalized * center) * 22)
     }
 }

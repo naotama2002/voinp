@@ -38,9 +38,14 @@ public struct TranscriptBuffer: Equatable, Sendable {
             // 重なり判定は「確定済み終端より前か」ではなく
             // 「既存セグメントと実際に重なるか」で行う。
             // 前者にすると、遅れて届いた前半の区間を誤って捨ててしまう。
+            //
+            // **端点の共有を「重なり」と見なしてはいけない。**
+            // ClosedRange.overlaps は [0,2] と [2,4] を true と判定するので、
+            // 連続する発話（前の終わりと次の始まりが同時刻）が捨てられてしまう。
+            // 実際に区間が食い込んでいる場合だけ重複とする。
             let overlapsExisting = segments.contains { existing in
                 guard let r = existing.audioRange else { return false }
-                return r.overlaps(range)
+                return r.lowerBound < range.upperBound && range.lowerBound < r.upperBound
             }
             guard !overlapsExisting else { return }
 

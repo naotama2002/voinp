@@ -39,6 +39,28 @@ struct TranscriptBufferTests {
         #expect(b.committed == "前半後半")
     }
 
+    @Test("連続する発話は捨てない（端点の共有は重なりではない）")
+    func adjacentSegmentsBothKept() {
+        var b = TranscriptBuffer()
+        // 「こんにちは。」を 2 回。前の終わりと次の始まりが同時刻になりうる。
+        b.apply(.finalized(.init(text: "こんにちは。",
+                                 audioRange: Duration.seconds(0)...Duration.seconds(2))))
+        b.apply(.finalized(.init(text: "こんにちは。",
+                                 audioRange: Duration.seconds(2)...Duration.seconds(4))))
+        #expect(b.committed == "こんにちは。こんにちは。",
+                "同じ文言でも別の区間なら両方残す")
+    }
+
+    @Test("本当に食い込んでいる区間は捨てる")
+    func trulyOverlappingDropped() {
+        var b = TranscriptBuffer()
+        b.apply(.finalized(.init(text: "こんにちは。",
+                                 audioRange: Duration.seconds(0)...Duration.seconds(2))))
+        b.apply(.finalized(.init(text: "こんにちは。",
+                                 audioRange: Duration.seconds(1)...Duration.seconds(3))))
+        #expect(b.committed == "こんにちは。", "再確定は二重化させない")
+    }
+
     @Test("時刻情報のない確定結果は到着順に積む")
     func untimedAppends() {
         var b = TranscriptBuffer()

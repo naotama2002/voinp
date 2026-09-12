@@ -27,6 +27,9 @@ public final class AppModel {
     public var settings: Settings
     let dependencies: Dependencies
 
+    /// セットアップウィザードを出す。合成ルートから注入する。
+    public var presentSetup: (() -> Void)?
+
     private var coordinator: DictationCoordinator?
     private var hotkey: EventTapHotkeySource?
     private var hud: HUDPanelController?
@@ -72,7 +75,17 @@ public final class AppModel {
             forName: NSApplication.didBecomeActiveNotification,
             object: nil, queue: .main
         ) { _ in
-            MainActor.assumeIsolated { [weak self] in self?.refreshPermissions() }
+            MainActor.assumeIsolated { [weak self] in
+                guard let self else { return }
+                refreshPermissions()
+                // **セットアップが未完了ならウィザードを出し続ける。**
+                // 権限やモデルが欠けているとアプリは何もできないので、
+                // メニューから探させるのではなく、こちらから提示する。
+                if needsSetup {
+                    Log.session.info("アクティブ化: セットアップ未完了のため再提示")
+                    presentSetup?()
+                }
+            }
         }
     }
 
@@ -265,6 +278,12 @@ public final class AppModel {
     // MARK: - メニューから
 
     public func toggleDictation() {
+        // 使えない状態で黙って失敗させない。何が足りないかを見せる。
+        guard !needsSetup else {
+            Log.session.notice("セットアップ未完了のため録音を開始しない")
+            presentSetup?()
+            return
+        }
         Task { await coordinator?.handle(command: phase.isListening ? .stop : .start) }
     }
 

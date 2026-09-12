@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             let setup = SetupWindowController(model: model)
             VoinpRoot.setup = setup
+            model.presentSetup = { [weak setup] in setup?.show() }
 
             // LSUIElement のアプリは起動しても画面に何も出ないため、
             // メニューバーのアイコンに気づけない。**自分からウィザードを出す。**
@@ -64,7 +65,7 @@ struct VoinpApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuBarContent(model: model, openSetup: { VoinpRoot.setup?.show() })
+            MenuBarContent(model: model)
         } label: {
             Image(systemName: model.menuBarSymbol)
         }

@@ -14,13 +14,14 @@ ENTITLEMENTS  := Resources/voinp.entitlements
 SIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning \
                    | awk '/Developer ID Application|Apple Development/ {print $$2; exit}')
 
-.PHONY: build bundle sign verify install run launch test clean reset-permissions help
+.PHONY: build bundle sign verify install run launch test clean reset-permissions help download-model
 
 help:
 	@echo "make test      テストを実行"
 	@echo "make install   ビルド→署名→~/Applications へ配置"
 	@echo "make run       install して起動（ログが端末に出る）"
 	@echo "make verify    署名・依存・プライバシー保証の検証"
+	@echo "make download-model  日本語認識モデルを取得（初回のみ）"
 	@echo "make reset-permissions  TCC の許可をリセット"
 
 build:
@@ -28,6 +29,11 @@ build:
 
 test:
 	swift test
+
+# 初回のみ。OS 経由でオンデバイス認識モデルを取得する。
+download-model:
+	swift build --product voinp-tools
+	$(shell swift build --show-bin-path)/voinp-tools ja-JP
 
 bundle: build
 	rm -rf $(APPDIR)

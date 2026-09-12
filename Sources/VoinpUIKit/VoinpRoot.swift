@@ -18,10 +18,17 @@ public enum VoinpRoot {
 
 struct VoinpApp: App {
     @State private var model = AppModel(dependencies: VoinpRoot.dependencies)
+    @State private var didStart = false
 
     init() {
         // LSUIElement が既に含意するが、素のバイナリを直接起動する開発時に効く。
         NSApplication.shared.setActivationPolicy(.accessory)
+    }
+
+    private func bootstrap() {
+        guard !didStart else { return }
+        didStart = true
+        model.start()
     }
 
     var body: some Scene {
@@ -29,7 +36,9 @@ struct VoinpApp: App {
             MenuBarContent(model: model)
         } label: {
             Image(systemName: model.menuBarSymbol)
+                .onAppear { bootstrap() }
         }
         .menuBarExtraStyle(.menu)
     }
 }
+

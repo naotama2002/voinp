@@ -14,6 +14,7 @@ let package = Package(
     products: [
         .executable(name: "voinp", targets: ["voinp"]),
         .executable(name: "voinp-offline", targets: ["voinp-offline"]),
+        .executable(name: "voinp-tools", targets: ["voinp-tools"]),
     ],
     targets: [
         // ── ネットワークに依存しない層 ──────────────────────────────
@@ -34,6 +35,11 @@ let package = Package(
             name: "voinp-offline",
             dependencies: ["VoinpUIKit"],
             swiftSettings: mainActorDefault),
+        // モデル取得などの開発用ユーティリティ
+        .executableTarget(
+            name: "voinp-tools",
+            dependencies: ["VoinpEngine"],
+            swiftSettings: strict),
 
         // ── テスト ────────────────────────────────────────────────
         .testTarget(name: "VoinpCoreTests", dependencies: ["VoinpCore"], swiftSettings: strict),

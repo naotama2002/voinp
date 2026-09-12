@@ -7,10 +7,15 @@ import VoinpCore
 public struct Dependencies: Sendable {
     public var llmClients: [any LLMClient]
     public var settings: Settings
+    /// 設定が読めなかった理由。非 nil の間は通信を全拒否する（fail closed）。
+    public var configError: String?
 
-    public init(llmClients: [any LLMClient] = [], settings: Settings = Settings()) {
+    public init(llmClients: [any LLMClient] = [],
+                settings: Settings = Settings(),
+                configError: String? = nil) {
         self.llmClients = llmClients
         self.settings = settings
+        self.configError = configError
     }
 
     /// ネットワークを含まない共通部分。

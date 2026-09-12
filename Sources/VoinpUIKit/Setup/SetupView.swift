@@ -281,6 +281,11 @@ public struct SetupView: View {
             if step != .welcome {
                 Button("戻る") { move(-1) }
             }
+            // 飛ばせない代わりに、中断できることは明示する。
+            // 権限が揃うまでウィザードはまた出てくるので、閉じても失うものはない。
+            if step != .ready, !isSatisfied(step) {
+                Button("あとで設定する") { onFinish() }
+            }
             Spacer()
             if step == .ready {
                 Button("はじめる") {
@@ -289,17 +294,19 @@ public struct SetupView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
+            } else if isSatisfied(step) {
+                Button("次へ") { move(1) }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
             } else {
-                // 三項演算子で ButtonStyle を切り替えられないので分岐する
-                if isSatisfied(step) {
-                    Button("次へ") { move(1) }
-                        .buttonStyle(.borderedProminent)
-                        .keyboardShortcut(.defaultAction)
-                } else {
-                    // 「あとで」だと、許可済みなのに状態を読めていないのか
-                    // 本当に未許可なのか区別がつかない。何が起きるかを書く。
-                    Button("この手順を飛ばす") { move(1) }
-                }
+                // **飛ばせるようにしない。**
+                // 権限もモデルも欠けたままでは Voinp は何もできないので、
+                // 先に進めても「準備完了」という嘘の画面に着くだけになる。
+                // 中断したい人はウィンドウを閉じればよく、
+                // 必要になればまた出てくる（メニューからも開ける）。
+                Text("この手順を完了すると次へ進めます")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.horizontal, 20)

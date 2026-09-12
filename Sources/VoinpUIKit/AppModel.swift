@@ -140,9 +140,10 @@ public final class AppModel {
         if missing != missingPermissions {
             // キャッシュされた値と機能判定がずれていないかも記録しておく。
             // ずれていれば「システム設定で許可したが再起動していない」状態。
-            Log.session.info("""
-                権限: 不足 \(missing.count, privacy: .public) 件                 mic(status=\(Permissions.microphoneStatus.rawValue, privacy: .public)                 open=\(Permissions.canOpenMicrophone(), privacy: .public))                 ax(tap=\(self.hotkey != nil, privacy: .public))
-                """)
+            let micStatus = Permissions.microphoneStatus.rawValue
+            let micOpen = Permissions.canOpenMicrophone()
+            let axTap = hotkey != nil
+            Log.session.info("権限: 不足\(missing.count, privacy: .public)件 mic(status=\(micStatus, privacy: .public),open=\(micOpen, privacy: .public)) ax(tap=\(axTap, privacy: .public))")
             missingPermissions = missing
         }
     }

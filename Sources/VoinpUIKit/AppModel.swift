@@ -58,11 +58,7 @@ public final class AppModel {
         let coord = DictationCoordinator(
             settings: settings,
             provider: dependencies.speechProvider,
-            inserter: PasteInserter(
-                pasteboard: SystemPasteboard(),
-                restoreDelayMs: settings.insertion.pasteRestoreDelayMs,
-                restoreClipboard: settings.insertion.restoreClipboard,
-                overrideKeyCode: settings.insertion.pasteKeyCode))
+            inserter: DictationCoordinator.makeInserter(settings))
         coordinator = coord
 
         tasks.append(Task { [weak self] in
@@ -101,7 +97,12 @@ public final class AppModel {
     @discardableResult
     private func startHotkeyIfPossible() -> Bool {
         if hotkey != nil { return true }
-        guard let combo = KeyCombo(string: settings.hotkey.binding) else { return false }
+        guard let combo = KeyCombo(string: settings.hotkey.binding) else {
+            // 読めない指定は黙って無視すると「効かない」だけになる。必ず残す。
+            Log.hotkey.error("ホットキーの指定を解釈できません: \(self.settings.hotkey.binding, privacy: .public)")
+            lastError = "ホットキー『\(settings.hotkey.binding)』を解釈できません"
+            return false
+        }
 
         let behavior = HotkeyInterpreter.Behavior(rawValue: settings.hotkey.behavior) ?? .hybrid
         let source = EventTapHotkeySource(config: .init(
@@ -109,6 +110,7 @@ public final class AppModel {
         do {
             try source.start()
             hotkey = source
+            Log.hotkey.info("ホットキーを登録: \(combo.stringValue, privacy: .public) (\(self.settings.hotkey.behavior, privacy: .public))")
             tasks.append(Task { [weak self] in
                 for await command in source.commands {
                     await self?.coordinator?.handle(command: command)
@@ -136,6 +138,8 @@ public final class AppModel {
             hud?.refreshLayout()   // テキストが伸びたら高さを追従させる
         case .level(let l): level = l
         case .modelProgress(let p): modelProgress = p
+        case .feedback(let f):
+            FeedbackPlayer.play(f, enabled: settings.audio.playFeedbackSounds)
         }
     }
 

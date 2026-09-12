@@ -11,6 +11,7 @@ public actor DictationCoordinator {
         case snapshot(TranscriptSnapshot)
         case level(Float)
         case modelProgress(Double)
+        case feedback(Feedback)
     }
 
     public nonisolated let updates: AsyncStream<Update>
@@ -21,7 +22,8 @@ public actor DictationCoordinator {
     private var settings: Settings
 
     private let provider: any TranscriptionProvider
-    private let inserter: any TextInserter
+    /// 設定で切り替わるので固定しない。
+    private var inserter: any TextInserter
     private let capture = AudioCapture()
     private let refine: @Sendable (String) async -> String
 
@@ -43,9 +45,41 @@ public actor DictationCoordinator {
         self.updateContinuation = parts.continuation
     }
 
-    public func update(settings: Settings) { self.settings = settings }
+    public func update(settings: Settings) {
+        let strategyChanged = settings.insertion != self.settings.insertion
+        self.settings = settings
+        // 挿入方法の設定は作り直さないと反映されない。
+        if strategyChanged {
+            let next = settings
+            Task { @MainActor in
+                let made = Self.makeInserter(next)
+                await self.replaceInserter(made)
+            }
+        }
+    }
+
+    /// 設定から挿入方法を組み立てる。
+    /// `SystemPasteboard` が `@MainActor` なので main actor 上で呼ぶ。
+    @MainActor
+    public static func makeInserter(_ settings: Settings) -> any TextInserter {
+        switch settings.insertion.strategy {
+        case "keystroke":
+            return KeystrokeInserter()
+        default:
+            return PasteInserter(
+                pasteboard: SystemPasteboard(),
+                restoreDelayMs: settings.insertion.pasteRestoreDelayMs,
+                restoreClipboard: settings.insertion.restoreClipboard,
+                overrideKeyCode: settings.insertion.pasteKeyCode)
+        }
+    }
 
     // MARK: - 外部からの入口
+
+    private func replaceInserter(_ new: any TextInserter) {
+        inserter = new
+        Log.insert.info("挿入方法を変更: \(new.identifier, privacy: .public)")
+    }
 
     public func handle(command: SessionCommand) async {
         switch command {
@@ -132,7 +166,10 @@ public actor DictationCoordinator {
                 await self?.dispatch(.dismissRequested)
             }
 
-        case .showHUD, .hideHUD, .play:
+        case .play(let feedback):
+            updateContinuation.yield(.feedback(feedback))
+
+        case .showHUD, .hideHUD:
             break   // UI 側が phase を見て反応する
         }
     }

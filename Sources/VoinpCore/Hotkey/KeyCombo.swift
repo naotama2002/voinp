@@ -97,7 +97,7 @@ extension KeyCombo {
             let t = token.lowercased()
             if let m = Self.tokenToModifier[t] {
                 mods.formUnion(m)
-            } else if let c = Self.nameToKey[t] {
+            } else if let c = Self.nameToKey[t] ?? Self.parseNumericKey(t) {
                 guard code == nil else { return nil }   // 非修飾キーは 1 つまで
                 code = c
             } else {
@@ -137,12 +137,42 @@ extension KeyCombo {
         "leftoption": .leftOption, "rightoption": .rightOption,
         "leftcommand": .leftCommand, "rightcommand": .rightCommand,
     ]
-    /// 実用上必要な範囲のみ。足りなければ "key<n>" で数値指定できる。
+    /// 仮想キーコードと名前の対応（US 配列基準の物理キー位置）。
+    ///
+    /// **すべてのキーを網羅すること。** 表に無いキーを `key<n>` として書き出すと、
+    /// 読み戻せずホットキーが失われる（実際に英字キーで発生した）。
+    /// 未知のキーも `key<n>` で往復できるようにしてある。
     public static let keyNames: [UInt16: String] = [
+        // 英字
+        0x00: "a", 0x0B: "b", 0x08: "c", 0x02: "d", 0x0E: "e", 0x03: "f",
+        0x05: "g", 0x04: "h", 0x22: "i", 0x26: "j", 0x28: "k", 0x25: "l",
+        0x2E: "m", 0x2D: "n", 0x1F: "o", 0x23: "p", 0x0C: "q", 0x0F: "r",
+        0x01: "s", 0x11: "t", 0x20: "u", 0x09: "v", 0x0D: "w", 0x07: "x",
+        0x10: "y", 0x06: "z",
+        // 数字
+        0x1D: "0", 0x12: "1", 0x13: "2", 0x14: "3", 0x15: "4",
+        0x17: "5", 0x16: "6", 0x1A: "7", 0x1C: "8", 0x19: "9",
+        // 記号
+        0x18: "equal", 0x1B: "minus", 0x21: "leftBracket", 0x1E: "rightBracket",
+        0x27: "quote", 0x29: "semicolon", 0x2A: "backslash", 0x2B: "comma",
+        0x2C: "slash", 0x2F: "period", 0x32: "grave",
+        // 編集・移動
         0x31: "space", 0x24: "return", 0x30: "tab", 0x35: "escape",
-        0x33: "delete", 0x7A: "f1", 0x78: "f2", 0x63: "f3", 0x76: "f4",
-        0x60: "f5", 0x61: "f6", 0x62: "f7", 0x64: "f8", 0x65: "f9",
+        0x33: "delete", 0x75: "forwardDelete",
+        0x73: "home", 0x77: "end", 0x74: "pageUp", 0x79: "pageDown",
+        0x7B: "left", 0x7C: "right", 0x7D: "down", 0x7E: "up",
+        // ファンクション
+        0x7A: "f1", 0x78: "f2", 0x63: "f3", 0x76: "f4", 0x60: "f5",
+        0x61: "f6", 0x62: "f7", 0x64: "f8", 0x65: "f9", 0x6D: "f10",
+        0x67: "f11", 0x6F: "f12", 0x69: "f13", 0x6B: "f14", 0x71: "f15",
     ]
+
     static let nameToKey: [String: UInt16] =
         Dictionary(uniqueKeysWithValues: keyNames.map { ($1, $0) })
+
+    /// 表に無いキーの "key<n>" 形式を読む。
+    static func parseNumericKey(_ token: String) -> UInt16? {
+        guard token.hasPrefix("key"), let n = UInt16(token.dropFirst(3)) else { return nil }
+        return n
+    }
 }

@@ -54,3 +54,38 @@ struct SettingsTests {
         #expect(again.refinement.enabled == true)
     }
 }
+
+@Suite("Settings — 変更の検知")
+struct SettingsChangeDetectionTests {
+
+    /// `update` は差分があるときだけ保存・反映する。
+    /// 各セクションの変更がきちんと「差分あり」と判定されることを確認する。
+    /// ここが壊れると、設定を変えても何も起きない。
+    @Test("各セクションの変更が検知される")
+    func everySectionDetectsChange() {
+        var a = Settings()
+        var b = Settings()
+        #expect(a == b)
+
+        b.hotkey.binding = "ctrl+opt+d"
+        #expect(a.hotkey != b.hotkey, "ホットキー")
+
+        b = Settings(); b.audio.playFeedbackSounds = false
+        #expect(a.audio != b.audio, "音")
+
+        b = Settings(); b.transcription.locale = "en-US"
+        #expect(a.transcription != b.transcription, "言語")
+
+        b = Settings(); b.insertion.strategy = "keystroke"
+        #expect(a.insertion != b.insertion, "挿入方法")
+
+        b = Settings(); b.insertion.pasteRestoreDelayMs = 500
+        #expect(a.insertion != b.insertion, "復元待ち時間")
+
+        b = Settings(); b.ui.hudShowText = false
+        #expect(a.ui != b.ui, "HUD 表示")
+
+        a.transcription.termHints = ["x"]
+        #expect(a.transcription != Settings().transcription, "用語ヒント")
+    }
+}

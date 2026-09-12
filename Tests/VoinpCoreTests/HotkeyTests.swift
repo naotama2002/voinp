@@ -157,3 +157,21 @@ struct HotkeyInterpreterTests {
         #expect(!i.isActive)
     }
 }
+
+@Suite("KeyCombo — 実在するキーの往復")
+struct KeyComboRealKeyTests {
+
+    @Test("英字キーを含む組み合わせが往復する", arguments: [
+        UInt16(0x02),  // D
+        UInt16(0x00),  // A
+        UInt16(0x11),  // T
+        UInt16(0x12),  // 1
+    ])
+    func letterKeysRoundTrip(_ code: UInt16) {
+        let combo = KeyCombo(keyCode: code, modifiers: [.leftControl, .leftOption])
+        let s = combo.stringValue
+        let parsed = KeyCombo(string: s)
+        #expect(parsed != nil, "『\(s)』を読み戻せること")
+        #expect(parsed?.keyCode == code, "キーコードが保たれること")
+    }
+}

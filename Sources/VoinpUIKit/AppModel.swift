@@ -143,9 +143,8 @@ public final class AppModel {
             // キャッシュされた値と機能判定がずれていないかも記録しておく。
             // ずれていれば「システム設定で許可したが再起動していない」状態。
             let micStatus = Permissions.microphoneStatus.rawValue
-            let micOpen = Permissions.canOpenMicrophone()
             let axTap = hotkey != nil
-            Log.session.info("権限: 不足\(missing.count, privacy: .public)件 mic(status=\(micStatus, privacy: .public),open=\(micOpen, privacy: .public)) ax(tap=\(axTap, privacy: .public))")
+            Log.session.info("権限: 不足\(missing.count, privacy: .public)件 mic(status=\(micStatus, privacy: .public)) ax(tap=\(axTap, privacy: .public))")
             missingPermissions = missing
         }
     }
@@ -243,6 +242,11 @@ public final class AppModel {
         case .accessibility: .accessibility
         }
         NSWorkspace.shared.open(pane.url)
+    }
+
+    /// マイクの許可にアプリ再起動が必要な状態か。
+    public var microphoneNeedsRestart: Bool {
+        missingPermissions.contains(.microphone) && Permissions.microphoneRequiresRestart
     }
 
     /// 許可の説明文。何をなぜ求めているかを先に伝える。

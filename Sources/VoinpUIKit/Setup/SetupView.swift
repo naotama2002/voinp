@@ -92,13 +92,15 @@ public struct SetupView: View {
                 .microphone,
                 icon: "mic.fill",
                 title: "マイクの使用を許可してください",
-                body: """
+                body: model.microphoneNeedsRestart ? """
                 音声を認識するために必要です。
                 音声はこの Mac 上でのみ処理され、保存されません。
 
-                システム設定で許可したあと macOS が
-                「終了して再度開く」を促してきたら、そのまま選んでください。
-                起動し直すとこの画面に戻ってきます。
+                以前に許可しなかったため、システム設定から許可する必要があります。
+                macOS の制約で、マイクの許可は Voinp を再起動するまで反映されません。
+                """ : """
+                音声を認識するために必要です。
+                音声はこの Mac 上でのみ処理され、保存されません。
                 """)
 
         case .accessibility:
@@ -148,20 +150,37 @@ public struct SetupView: View {
             Text(body).font(.system(size: 13)).foregroundStyle(.secondary)
 
             if model.missingPermissions.contains(p) {
-                HStack(spacing: 10) {
-                    Button("許可する…") { model.requestPermission(p) }
-                        .buttonStyle(.borderedProminent)
-                    Button("システム設定を開く") { model.openSettings(for: p) }
-                }
-                Text("許可すると自動的に次へ進みます。")
-                    .font(.system(size: 11)).foregroundStyle(.tertiary)
+                if p == .microphone && model.microphoneNeedsRestart {
+                    // 再起動が避けられない経路。手順を番号で示し、
+                    // 再起動ボタンを主役にする（小さなリンクでは見落とされる）。
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("1. システム設定で Voinp のマイクをオンにする")
+                        HStack(spacing: 10) {
+                            Button("システム設定を開く") { model.openSettings(for: p) }
+                            Text("2. 戻ってきたら再起動する")
+                        }
+                        Button("許可したので Voinp を再起動") { model.relaunch() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    .font(.system(size: 13))
+                } else {
+                    HStack(spacing: 10) {
+                        Button("許可する…") { model.requestPermission(p) }
+                            .buttonStyle(.borderedProminent)
+                        Button("システム設定を開く") { model.openSettings(for: p) }
+                    }
+                    Text("許可すると自動的に次へ進みます。")
+                        .font(.system(size: 11)).foregroundStyle(.tertiary)
 
-                HStack(spacing: 6) {
-                    Text("許可したのに反映されない場合は")
-                    Button("Voinp を再起動") { model.relaunch() }
-                        .buttonStyle(.link)
+                    if p == .accessibility {
+                        HStack(spacing: 6) {
+                            Text("許可したのに反映されない場合は")
+                            Button("Voinp を再起動") { model.relaunch() }
+                                .buttonStyle(.link)
+                        }
+                        .font(.system(size: 11)).foregroundStyle(.tertiary)
+                    }
                 }
-                .font(.system(size: 11)).foregroundStyle(.tertiary)
             }
             Spacer()
         }

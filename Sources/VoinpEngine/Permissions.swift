@@ -29,34 +29,30 @@ public enum Permissions {
         AVCaptureDevice.authorizationStatus(for: .audio)
     }
 
-    /// マイクが実際に使えるか。
-    ///
-    /// `authorizationStatus` はプロセス内でキャッシュされることがあり、
-    /// システム設定で許可してもアプリを再起動するまで古い値を返す
-    /// （macOS が「終了して再度開く」を促すのはこのため）。
-    ///
-    /// `AVAudioEngine.start()` は判定に使えない。**拒否されていても成功し、
-    /// 無音のバッファを返す**ため、成功しても許可の証明にならない。
-    /// `AVCaptureDeviceInput` の生成は未許可なら throw するので、
-    /// こちらを機能的な判定に使う。
-    public static func canOpenMicrophone() -> Bool {
-        guard let device = AVCaptureDevice.default(for: .audio) else { return false }
-        do {
-            _ = try AVCaptureDeviceInput(device: device)
-            return true
-        } catch {
-            return false
-        }
-    }
-
     /// マイクが使えるか。
     ///
-    /// **まず副作用のない `authorizationStatus` を見る。** 許可されていればそれで終わり。
-    /// そうでないときだけ実地検証に落ちる（キャッシュが古い可能性があるため）。
-    /// 呼ばれるのは権限確認のタイミングだけなので、実地検証が走る頻度は低い。
+    /// **アクセシビリティと違い、機能判定という逃げ道がない。**
+    /// 一度試して確認した結果:
+    ///   - `AVAudioEngine.start()` は拒否されていても成功し、無音を返す（判定不能）
+    ///   - `AVCaptureDeviceInput` の生成は未許可なら throw するが、
+    ///     システム設定で許可しても**再起動するまで throw し続ける**
+    ///
+    /// つまり TCC の判断は音声サブシステム側で握られており、
+    /// プロセス内から現在の状態を知る方法がない。
+    /// Zoom など他のアプリでも「許可したのに再起動するまで使えない」のは同じ理由。
+    ///
+    /// したがって `authorizationStatus` を素直に使い、
+    /// 再起動が必要な場面ではそう案内する（`requiresRestartToApply`）。
     public static var isMicrophoneUsable: Bool {
-        if microphoneStatus == .authorized { return true }
-        return canOpenMicrophone()
+        microphoneStatus == .authorized
+    }
+
+    /// 許可の反映にアプリの再起動が要る状態か。
+    ///
+    /// 一度拒否されると、アプリ内ダイアログは二度と出せず
+    /// システム設定で許可してもらうしかない。その場合は再起動が必須になる。
+    public static var microphoneRequiresRestart: Bool {
+        microphoneStatus == .denied || microphoneStatus == .restricted
     }
 
     public static func requestMicrophone() async -> Bool {
@@ -96,9 +92,14 @@ public enum Permissions {
     ///
     /// 未決定ならダイアログが出るので、**そこで設定も同時に開いてはいけない**
     /// （ダイアログの上に設定画面が被さって何が起きたか分からなくなる）。
+    /// マイク許可を求める。
+    ///
+    /// **未決定のうちにアプリ内ダイアログで許可してもらうのが唯一の「再起動不要」経路。**
+    /// 一度拒否されるとシステム設定経由しかなく、そこからは再起動が必須になる。
+    /// だからウィザードでは、この経路を最優先で通す。
     public static func requestMicrophoneIfPossible() async -> MicrophoneRequestOutcome {
-        if isMicrophoneUsable { return .granted }
         switch microphoneStatus {
+        case .authorized: return .granted
         case .notDetermined:
             return await requestMicrophone() ? .granted : .promptShown
         default:

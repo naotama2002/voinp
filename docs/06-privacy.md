@@ -185,9 +185,50 @@ public struct EgressPolicySnapshot: Sendable, Equatable, Codable {
    ```
 
    **経路を確定できない場合は拒否する** (`.undeterminable`)。
-   PAC (`kCFProxyTypeAutoConfigurationURL`) は URL ごとに結果が変わりうるうえ、
-   評価にネットワークアクセスが要ることすらある。
    「たぶん直結だろう」で送るのは、この章の他のどの規則よりも危うい。
+
+   ### 勘所: PAC は「拒否」ではなく「評価」する
+
+   実装当初、PAC (`kCFProxyTypeAutoConfigurationURL`) を評価せず
+   一律 `.undeterminable` にして拒否した。**社内 Mac で通信が全部止まった。**
+   このマシンは `ProxyAutoConfigURLString` に社内 PAC が設定されており、
+   `CFNetworkCopyProxiesForURL` は常に PAC エントリを返す。
+
+   上の fail closed は「評価に失敗した / 結果が解釈できない」場合の話であって、
+   評価しないことではない。`CFNetworkExecuteProxyAutoConfigurationURL` で
+   PAC を取得・評価し、**得られた具体的なプロキシを分類する**。
+
+   - PAC の取得自体は `EgressGate` を通らない。判定材料を集める通信が
+     判定を要する循環になるため。通るのは PAC ファイルの取得だけで、
+     書き起こしや発話内容は含まれない（対象 URL も送られず、
+     落としたスクリプトをローカルで評価するだけ）。
+   - 評価は専用スレッドの run loop で回す。呼び出し元に run loop がある保証はない。
+   - 5 秒で打ち切り、期限切れは `.undeterminable`（＝拒否）。直結とみなさない。
+   - 完了コールバックは**トップレベル関数**に置くこと。C の関数ポインタへ渡す
+     クロージャは型の中に書くと暗黙の `Self` 参照が入り、コンパイラが落ちた。
+
+   ### 勘所: PAC URL の値は `NSURL` で来る
+
+   `kCFProxyAutoConfigurationURLKey` を `as? String` で取り出そうとして常に失敗し、
+   PAC 環境で全拒否になった。実機で型を確認したところ `NSURL` だった。
+   `as? URL` を先に試し、文字列も一応受ける。`ProxyResolverTests` で固定している。
+
+   ### このマシンでの実測 (2026-09-13)
+
+   | 宛先 | 経路 |
+   |---|---|
+   | `https://ai4-api.dev.cybozu.xyz` | `proxied([社内 squid])` |
+   | `http://127.0.0.1:1234` | `direct` |
+   | `http://localhost:11434` | `direct` |
+   | `https://api.openai.com` | `proxied([社内 squid])` |
+
+   **ローカル LLM は PAC 環境でも `direct`** なので、
+   「ローカル LLM なら音声も書き起こしもこの Mac から出ない」は成立し続ける。
+   一方で社外向けは実際にプロキシを経由しており、
+   プロキシ判定が無かった頃はその事実をゲートが見落としていた。
+
+   切り分け用に `PacProbeTests` を置いてある（既定では無効。
+   `swift test --filter PacProbeTests` で実機の経路が出る）。
 
    実効クラスは **`max(宛先クラス, プロキシクラス)`** として
    `PrivacyPosture` と監査記録の双方に反映する

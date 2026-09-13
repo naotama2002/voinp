@@ -75,7 +75,7 @@ public struct TextRefiner: Sendable {
             case .reject(let reason):
                 // 棄却は失敗ではない（LLM は応答している）。生原稿に戻すだけ。
                 await failures.reset()
-                Log.refine.notice("校正を棄却: \(String(describing: reason), privacy: .public)")
+                Log.refine.notice("校正を棄却: \(reason.logCode, privacy: .public)")
                 return Outcome(text: transcript, usedRefinement: false,
                                reason: "LLM の出力を棄却（\(Self.describe(reason))）")
             }

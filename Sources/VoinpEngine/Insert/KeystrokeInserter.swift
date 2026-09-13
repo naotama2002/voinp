@@ -17,7 +17,9 @@ public actor KeystrokeInserter: TextInserter {
     }
 
     public func insert(_ text: String, into target: InsertionTarget) async throws {
-        guard !target.isSecureInput else { throw VoinpError.secureInputActive }
+        // ペースト方式と同じ理由で、開始時の判定ではなく直前の実態を見る。
+        // こちらは 1 文字ずつ post するぶん、取り違えたときの被害が大きい。
+        try await MainActor.run { try InsertionTargetResolver.assertStillCurrent(target) }
         guard !text.isEmpty else { return }
 
         let source = CGEventSource(stateID: .hidSystemState)

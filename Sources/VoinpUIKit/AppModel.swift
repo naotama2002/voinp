@@ -54,6 +54,14 @@ public final class AppModel {
 
     // MARK: - 起動
 
+    /// 校正の連続失敗カウンタ。**発話をまたいで共有する。**
+    ///
+    /// 以前は発話ごとに `TextRefiner` を作り直しており、内部のカウンタも
+    /// 毎回 0 に戻っていた。そのためサーバーが落ちていても
+    /// 「連続失敗したら一時停止する」が永久に発動せず、
+    /// 喋るたびに固定時間だけ待たされ続けていた。
+    private let refineFailures = FailureCounter()
+
     public func start() {
         hud = HUDPanelController(model: self)
 
@@ -88,9 +96,12 @@ public final class AppModel {
                     current.refinement.disableAfterConsecutiveFailures
                 policy.maxOutputTokens = current.refinement.maxOutputTokens
 
+                // クライアントは接続先を変えられるよう毎回作るが、
+                // 失敗カウンタは持ち越す（作り直すと一時停止が効かない）。
                 let refiner = TextRefiner(client: client,
                                           model: current.refinement.openaiCompatible.model,
-                                          policy: policy)
+                                          policy: policy,
+                                          failures: self?.refineFailures ?? FailureCounter())
                 let outcome = await refiner.refine(
                     text, preset: .fromUserPrompt(current.refinement.prompt))
                 return RefineOutcome(text: outcome.text,
@@ -377,6 +388,9 @@ public final class AppModel {
 
         let hotkeyChanged = next.hotkey != settings.hotkey
         let localeChanged = next.transcription.locale != settings.transcription.locale
+        // 接続先やモデルを直したなら、一時停止を解いてもう一度試させる。
+        // 直したのに「連続失敗のため一時停止中」が出続けるのは理不尽。
+        let refinementChanged = next.refinement != settings.refinement
         settings = next
 
         do {
@@ -389,6 +403,7 @@ public final class AppModel {
         Task { await coordinator?.update(settings: next) }
         if hotkeyChanged { restartHotkey() }
         if localeChanged { Task { await refreshModelReadiness() } }
+        if refinementChanged { Task { [refineFailures] in await refineFailures.clear() } }
     }
 
     /// ホットキーの記録中は既存のホットキーを止める。
@@ -416,9 +431,13 @@ public final class AppModel {
     // MARK: - 校正の設定
 
     /// API キーを Keychain に保存する。**設定ファイルには書かない。**
-    public func storeAPIKey(_ key: String) {
-        guard let store = dependencies.credentials else { return }
-        let ref = CredentialRef(account: "openai-compatible/apiKey")
+    /// API キーを**接続先ホストごとの口座**へ保存する。
+    ///
+    /// 固定の口座名 1 つに保存していた頃は、接続先を変えると
+    /// 前のサーバー用のキーが新しいサーバーへ送られていた。
+    public func storeAPIKey(_ key: String, forEndpoint endpoint: String) {
+        guard let store = dependencies.credentials,
+              let ref = CredentialRef.openAICompatible(urlString: endpoint) else { return }
         do {
             try store.write(key, to: ref)
         } catch {

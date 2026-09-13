@@ -173,35 +173,36 @@ struct RefinementSettings: View {
         let key = apiKeyInput
 
         Task {
+            // **キーはこれから叩くホストの口座へ保存する。**
+            // 共通の口座に入れていた頃は、接続先を変えた瞬間に
+            // 前のサーバー用のキーが新しいサーバーへ送られていた。
             if !key.isEmpty {
-                model.storeAPIKey(key)
+                model.storeAPIKey(key, forEndpoint: input)
                 model.update { $0.refinement.openaiCompatible.requiresAPIKey = true }
             }
             model.allowProbe(for: input)
 
             switch await discover(input) {
-            case .success(let found):
+            case .success(let baseURL, let found):
                 models = found
                 probeSucceeded = true
                 probeMessage = "接続できました（モデル \(found.count) 件）"
                 model.update { s in
-                    s.refinement.openaiCompatible.baseURL = normalizedURL(input)
+                    // **探索で実際に通った URL を保存する。**
+                    // 入力文字列から組み直すと、テストした URL と保存する URL が
+                    // ずれて、接続テストだけ成功する状態になる。
+                    s.refinement.openaiCompatible.baseURL = baseURL
                     if s.refinement.openaiCompatible.model.isEmpty, let first = found.first {
                         s.refinement.openaiCompatible.model = first.id
                     }
                 }
-                apiKeyInput = ""   // 画面に残さない
+                urlInput = baseURL   // 確定した URL を画面にも反映する
+                apiKeyInput = ""     // 画面に残さない
             case .failure(let message):
                 probeSucceeded = false
                 probeMessage = message
             }
             isProbing = false
         }
-    }
-
-    private func normalizedURL(_ raw: String) -> String {
-        var s = raw.trimmingCharacters(in: .whitespaces)
-        while s.hasSuffix("/") { s.removeLast() }
-        return s.hasSuffix("/v1") ? s : s + "/v1"
     }
 }

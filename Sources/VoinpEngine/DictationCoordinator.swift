@@ -25,7 +25,9 @@ public actor DictationCoordinator {
     public nonisolated let updates: AsyncStream<Update>
     private nonisolated let updateContinuation: AsyncStream<Update>.Continuation
 
-    private var machine = SessionMachine()
+    private var machine: SessionMachine
+    /// 上限時間で自動確定するためのタイマ。
+    private var maxDurationTask: Task<Void, Never>?
     private var buffer = TranscriptBuffer()
     private var settings: Settings
 
@@ -38,6 +40,15 @@ public actor DictationCoordinator {
     private var session: (any TranscriptionSession)?
     private var pumpTask: Task<Void, Never>?
     private var resultTask: Task<Void, Never>?
+
+    /// セッションの世代。**開始とキャンセルのたびに進める。**
+    ///
+    /// `startCapture` はモデル準備・セッション開始・音声取り込みで何度も await する。
+    /// actor はその中断点で他のメッセージを受けるので、待っている間に HUD から
+    /// キャンセルされ、状態機械が idle に戻ることがある。
+    /// 以前はその後も処理が続き、**キャンセル済みなのに録音が始まっていた**。
+    /// 中断から戻るたびに世代を照合し、変わっていれば後始末して降りる。
+    private var generation: UInt64 = 0
     private var lastLevelEmit = ContinuousClock.now
     private var levelEmitCount = 0
 
@@ -49,6 +60,7 @@ public actor DictationCoordinator {
         self.provider = provider
         self.inserter = inserter
         self.refine = refine
+        self.machine = SessionMachine(limits: Self.limits(from: settings))
         // 音量は 20Hz で流れるので、phase や snapshot と同じ流れに乗せると
         // bufferingNewest で捨てられやすい。多めに確保する。
         let parts = AsyncStream<Update>.makeStream(bufferingPolicy: .bufferingNewest(64))
@@ -58,7 +70,13 @@ public actor DictationCoordinator {
 
     public func update(settings: Settings) {
         let strategyChanged = settings.insertion != self.settings.insertion
+        let limitsChanged = settings.audio.minRecordingMs != self.settings.audio.minRecordingMs
         self.settings = settings
+        // 状態機械は待機中にだけ作り直す。録音中に差し替えると進行中の
+        // セッションの状態（開始時刻・バッファ）が消える。
+        if limitsChanged, case .idle = machine.phase {
+            machine = SessionMachine(limits: Self.limits(from: settings))
+        }
         // 挿入方法の設定は作り直さないと反映されない。
         if strategyChanged {
             let next = settings
@@ -92,6 +110,9 @@ public actor DictationCoordinator {
         Log.insert.info("挿入方法を変更: \(new.identifier, privacy: .public)")
     }
 
+    /// 遷移をテストから読むための口。`@testable` 専用で、公開 API ではない。
+    var phaseForTesting: SessionPhase { machine.phase }
+
     public func handle(command: SessionCommand) async {
         switch command {
         case .start:
@@ -117,12 +138,57 @@ public actor DictationCoordinator {
         for action in actions { await perform(action) }
     }
 
+    /// 上限時間に達したら自動で確定する。
+    ///
+    /// `maxRecordingSeconds` は設定ファイルにもUIにもあったのに、
+    /// **どこからも参照されていなかった**。トグル方式で録音したまま
+    /// 忘れると、無期限にマイクが開き続けることになる。
+    /// キャンセルではなく確定にするのは、それまでの発話を捨てないため。
+    private func armMaxDuration(generation g: UInt64) {
+        maxDurationTask?.cancel()
+        let seconds = settings.audio.maxRecordingSeconds
+        guard seconds > 0 else { return }   // 0 以下は無制限の意
+        maxDurationTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            await self?.maxDurationReached(generation: g)
+        }
+    }
+
+    private func maxDurationReached(generation g: UInt64) async {
+        // 同じ録音がまだ続いているときだけ効かせる。
+        guard isCurrent(g), case .listening = machine.phase else { return }
+        Log.session.notice("上限 \(self.settings.audio.maxRecordingSeconds, privacy: .public) 秒に達したので確定する")
+        await dispatch(.stopRequested)
+    }
+
+    /// 設定を状態機械の制約へ写す。
+    ///
+    /// `minRecordingMs` は長らく設定ファイルに書けるだけで、
+    /// 状態機械は固定値 250ms を使っていた（設定しても効かなかった）。
+    static func limits(from settings: Settings) -> SessionMachine.Limits {
+        var limits = SessionMachine.Limits()
+        limits.minRecording = .milliseconds(settings.audio.minRecordingMs)
+        return limits
+    }
+
+    /// 新しい世代を開始し、その番号を返す。
+    private func beginGeneration() -> UInt64 {
+        generation &+= 1
+        return generation
+    }
+
+    /// `await` から戻ったときに、まだ自分の世代かを確かめる。
+    private func isCurrent(_ g: UInt64) -> Bool { generation == g }
+
     private func perform(_ action: SessionAction) async {
         switch action {
         case .startCapture(let target):
             await startCapture(target: target)
 
         case .stopCaptureAndFinalize:
+            maxDurationTask?.cancel()
+            maxDurationTask = nil
             await capture.stop()
             pumpTask?.cancel()
             do {
@@ -143,6 +209,11 @@ public actor DictationCoordinator {
             await dispatch(.transcriptionFinished(text: text))
 
         case .abortEverything:
+            // **最初に世代を進める。** これで、いま中断点で待っている
+            // startCapture / refine が再開しても自分が失効したと分かる。
+            _ = beginGeneration()
+            maxDurationTask?.cancel()
+            maxDurationTask = nil
             await capture.stop()
             pumpTask?.cancel()
             resultTask?.cancel()
@@ -157,7 +228,13 @@ public actor DictationCoordinator {
                 await dispatch(.refinementFinished(text: text)); return
             }
             // 校正は失敗しても生原稿が返る。ここで分岐は要らない。
+            // ただし LLM の応答待ちは数秒あり、その間にキャンセルされうる。
+            let g = generation
             let outcome = await refine(text)
+            guard isCurrent(g) else {
+                Log.refine.info("校正の応答待ちの間にキャンセルされたため破棄する")
+                return
+            }
             // 本文は出さない（privacy）。変化の有無と量だけ残す。
             if !outcome.ran {
                 Log.refine.notice("校正: 実行されず（\(outcome.note ?? "理由不明", privacy: .public)）")
@@ -179,6 +256,13 @@ public actor DictationCoordinator {
             do {
                 try await inserter.insert(text, into: target)
                 await dispatch(.insertionFinished(.inserted(strategy: inserter.identifier)))
+            } catch VoinpError.secureInputActive {
+                // **ペーストボードにも残さない。** パスワード欄へ向けて話した内容が
+                // 退避先から読み出せてしまうのは、挿入できないことより悪い。
+                await dispatch(.failed(.secureInputActive))
+            } catch let e as VoinpError {
+                Log.insert.error("挿入に失敗: \(String(describing: e), privacy: .public)")
+                await dispatch(.failed(.insertionFailed(e)))
             } catch {
                 Log.insert.error("挿入に失敗: \(String(describing: error), privacy: .public)")
                 await dispatch(.failed(.insertionFailed(.axSilentNoop)))
@@ -213,14 +297,26 @@ public actor DictationCoordinator {
             wantsPartialResults: settings.transcription.showPartialResults,
             punctuation: settings.transcription.punctuation == "automatic")
 
+        let g = beginGeneration()
+
         if case .needsModelDownload = await provider.readiness(for: request) {
             await dispatch(.modelProgress(0)); return
+        }
+        guard isCurrent(g) else {
+            Log.session.info("モデル確認中にキャンセルされたため開始しない")
+            return
         }
 
         buffer.reset()
         levelEmitCount = 0
         do {
             let s = try await provider.startSession(request)
+            // セッション生成中にキャンセルされていたら、作った分を畳んで降りる。
+            guard isCurrent(g) else {
+                Log.session.info("セッション開始中にキャンセルされたため破棄する")
+                await s.cancel()
+                return
+            }
             session = s
 
             // 認識結果は損失不可。actor 内で直接消費する。
@@ -235,8 +331,26 @@ public actor DictationCoordinator {
             }
 
             let format = await provider.preferredFormat(for: request)
+            guard isCurrent(g) else {
+                Log.session.info("フォーマット取得中にキャンセルされたため録音しない")
+                resultTask?.cancel()
+                await s.cancel()
+                session = nil
+                return
+            }
+
             let stream = try await capture.start(format: format) { [weak self] level in
                 Task { await self?.emitLevel(level) }
+            }
+            // **ここが本命。** マイクを開いた直後にキャンセル済みだと分かったら、
+            // すぐ閉じる。放置すると録音ランプが点いたまま残る。
+            guard isCurrent(g) else {
+                Log.session.info("録音開始直後にキャンセルされたため停止する")
+                await capture.stop()
+                resultTask?.cancel()
+                await s.cancel()
+                session = nil
+                return
             }
 
             // 音声は損失許容（bufferingNewest）。詰まっても無制限に食わない。
@@ -248,6 +362,7 @@ public actor DictationCoordinator {
                 _ = self
             }
             await dispatch(.audioStarted)
+            armMaxDuration(generation: g)
         } catch {
             Log.audio.error("録音を開始できません: \(String(describing: error), privacy: .public)")
             await dispatch(.failed(.audioUnavailable(.microphoneNotGranted)))

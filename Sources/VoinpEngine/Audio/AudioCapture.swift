@@ -96,16 +96,32 @@ public actor AudioCapture {
         }
 
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            // **失敗しても tap は刺さったまま残る。**
+            // isRunning が false のままなので stop() は即 return し、
+            // 後始末されない。次に start() すると同じ bus へ二重に
+            // installTap することになり、AVAudioEngine が落ちる。
+            // 投げる前に、ここで自分が作ったものを畳む。
+            teardown()
+            throw error
+        }
         isRunning = true
         return stream
     }
 
     public func stop() {
         guard isRunning else { return }
+        teardown()
+        isRunning = false
+    }
+
+    /// tap とストリームを解放する。**開始に失敗した経路からも呼ぶ**ので、
+    /// `isRunning` を見ないこと。何度呼ばれても安全に書く。
+    private func teardown() {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        isRunning = false
         continuation?.finish()
         continuation = nil
     }

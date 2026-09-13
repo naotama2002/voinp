@@ -46,6 +46,14 @@ echo "== 5. ログにユーザーテキストが漏れないこと =="
 leaks=$(grep -rn --include='*.swift' 'privacy: *\.public' Sources/ \
         | grep -E 'String\(describing: *(phase|.*[Pp]hase|.*snapshot|.*[Tt]ext)' || true)
 leaks="$leaks$(grep -rnE --include='*\.swift' 'Log\.[a-z]+\.[a-z]+\("[^"]*\\\((text|transcript|committed|volatileTail|snapshot)[,)]' Sources/ || true)"
+# 本文そのものだけでなく、**本文から取り出した値を持つ型**も危ない。
+# RefinementGuard.Rejection.numberMismatch は発話中の数値
+# （電話番号・金額・番地）を保持する。String(describing:) でログに流すと
+# そのまま unified log に残る。件数だけ出す logCode を必ず経由させる。
+# 実際にこの経路で漏れていたのに、本文検出だけの検査では素通りした。
+leaks="$leaks$(grep -rnE --include='*\.swift' \
+    'Log\.[a-z]+\.[a-z]+\("[^"]*\\\((String\(describing: *)?(reason|rejection|verdict)\b' \
+    Sources/ | grep -v '\.logCode' || true)"
 if [ -z "$(echo "$leaks" | tr -d '[:space:]')" ]; then ok "本文の .public 補間なし"
 else bad "ログに本文が漏れる可能性:"; echo "$leaks" | sed 's/^/       /'; fi
 

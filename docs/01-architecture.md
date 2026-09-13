@@ -330,3 +330,26 @@ final class AppModel {
 7. `VoinpNet` + `EgressGate` + OpenAI 互換クライアント + 校正
 
 1 が最大のリスクなので最初に置いている。
+
+## 勘所: セッションの世代でキャンセルとの競合を断つ
+
+`DictationCoordinator` は actor だが、**actor は中断点で他のメッセージを受ける。**
+`startCapture` はモデル準備・セッション開始・フォーマット取得と何度も await するので、
+待っている間に HUD からキャンセルされ、状態機械が idle に戻ることがある。
+以前はそこから戻ったあと素通しで録音を開始しており、
+**キャンセル済みなのにマイクが開く**経路があった。
+
+`generation` を持ち、開始とキャンセルのたびに進める。
+中断から戻るたびに照合し、変わっていれば作りかけを畳んで降りる。
+
+```swift
+let g = beginGeneration()
+...
+guard isCurrent(g) else { await s.cancel(); return }
+```
+
+LLM の応答待ち (`refine`) も数秒あるので同じ扱いにする。
+
+**actor だから安全、ではない。** 排他されるのは 1 回の中断なし実行区間だけで、
+await をまたいだ不変条件は自分で守る必要がある。
+`CancellationRaceTests` が、世代チェックを外すと落ちることまで含めて固定している。

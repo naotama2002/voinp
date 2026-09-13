@@ -124,6 +124,10 @@ struct HUDView: View {
         case .permissionMissing(.accessibility): "アクセシビリティの許可が必要です"
         case .tooShort: "短すぎます"
         case .modifiersStuck: "⌘V で貼り付けてください"
+        // フォーカス移動は「失敗」ではなく、こちらが意図的に中止したもの。
+        // 原因が分からないと誤動作に見えるので、理由をそのまま伝える。
+        case .insertionFailed(.focusChangedDuringRecognition):
+            "入力先が変わったため中止しました。⌘V で貼り付けてください"
         case .insertionFailed: "挿入できませんでした。⌘V で貼り付けてください"
         case .audioUnavailable: "マイクを使用できません"
         case .transcriptionFailed: "認識に失敗しました"

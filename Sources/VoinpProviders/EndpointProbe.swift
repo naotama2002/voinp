@@ -57,8 +57,15 @@ public struct EndpointProbe: Sendable {
 
     public init(gate: EgressGate) { self.gate = gate }
 
-    public func discover(rawInput: String, credential: CredentialRef?) async -> Result<Discovery, Failure> {
+    /// 接続先を探索する。
+    ///
+    /// **資格情報は呼び出し側から受け取らない。** 正規化したホストから自分で引く。
+    /// 以前は共通の `CredentialRef` を渡す設計で、接続先を変えたときに
+    /// 前のサーバー用の API キーを新しいサーバーへ送っていた。
+    /// 引数で渡せなくすれば、その取り違えは起こしようがない。
+    public func discover(rawInput: String) async -> Result<Discovery, Failure> {
         guard let base = Self.normalize(rawInput) else { return .failure(.invalidURL) }
+        let credential = CredentialRef.openAICompatible(host: base.host)
 
         var tried: [String] = []
         var lastFailure: Failure = .notFound(tried: [])

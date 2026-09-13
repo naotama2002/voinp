@@ -39,15 +39,21 @@ public actor EgressGate {
     private let policy: @Sendable () async -> EgressPolicySnapshot
     private let credentials: any CredentialStore
     private let classifier: HostClassifier
+    /// システムのプロキシ設定を引く。テストから差し替えられるよう closure にしてある
+    /// （本物は実機のシステム設定に依存し、CI で経路を再現できない）。
+    private let proxyRoute: @Sendable (URL) async -> ProxyResolver.Route
     private let session: URLSession
     private let audit: EgressAuditLog
 
     public init(policy: @escaping @Sendable () async -> EgressPolicySnapshot,
                 credentials: any CredentialStore,
-                audit: EgressAuditLog = EgressAuditLog()) {
+                audit: EgressAuditLog = EgressAuditLog(),
+                proxyRoute: @escaping @Sendable (URL) async -> ProxyResolver.Route
+                    = { await ProxyResolver().route(for: $0) }) {
         self.policy = policy
         self.credentials = credentials
         self.classifier = HostClassifier()
+        self.proxyRoute = proxyRoute
         self.audit = audit
 
         let config = URLSessionConfiguration.ephemeral
@@ -96,14 +102,52 @@ public actor EgressGate {
             throw VoinpError.egressDenied(.classExceedsPolicy(requested: reach, max: snapshot.maxClass))
         }
 
-        // 5. スキーム。公開ホストへの平文は常に拒否する。
-        if request.url.scheme == "http", reach > .privateNetwork {
+        // 5. プロキシ。**宛先の分類だけでは足りない。**
+        //    システム設定や PAC でプロキシが入っていれば、実際の TCP 相手はプロキシ。
+        //    宛先が 127.0.0.1 でも、公開プロキシが適用されれば本文は社外へ出る。
+        //    「分類して記録する」ではなく、許可判定そのものに含める。
+        let effective: EgressClass
+        switch await proxyRoute(request.url) {
+        case .direct:
+            effective = reach
+
+        case .proxied(let proxyHosts):
+            // プロキシ自身にも宛先と同じ基準を課す。
+            var proxyClass = EgressClass.loopback
+            for p in proxyHosts {
+                proxyClass = max(proxyClass, try await classifier.classify(host: p))
+            }
+            guard proxyClass <= snapshot.maxClass else {
+                await audit.record(.denied(host: host, purpose: request.purpose,
+                                           reason: .proxyExceedsPolicy(proxyClass)))
+                throw VoinpError.egressDenied(.proxyExceedsPolicy(proxyClass))
+            }
+            // ローカルの LLM を指しているのにプロキシへ出て行く構成は異常。
+            // 「この Mac から出ない」という約束が黙って破れる典型なので、必ず止める。
+            guard !(reach == .loopback && proxyClass > .loopback) else {
+                await audit.record(.denied(host: host, purpose: request.purpose,
+                                           reason: .loopbackDestinationWouldLeaveViaProxy))
+                throw VoinpError.egressDenied(.loopbackDestinationWouldLeaveViaProxy)
+            }
+            // 実効クラスは遠いほうに合わせる。監査記録にもこちらを残す。
+            effective = max(reach, proxyClass)
+
+        case .needsPAC, .undeterminable:
+            // PAC の評価失敗など。**「たぶん直結」で送らない。**
             await audit.record(.denied(host: host, purpose: request.purpose,
-                                       reason: .insecureSchemeForClass(reach)))
-            throw VoinpError.egressDenied(.insecureSchemeForClass(reach))
+                                       reason: .proxyChainUnknown))
+            throw VoinpError.egressDenied(.proxyChainUnknown)
         }
 
-        return try await perform(request, host: host, reach: reach)
+        // 6. スキーム。公開ホストへの平文は常に拒否する。
+        //    プロキシ経由なら平文はプロキシまで丸見えなので、実効クラスで判定する。
+        if request.url.scheme == "http", effective > .privateNetwork {
+            await audit.record(.denied(host: host, purpose: request.purpose,
+                                       reason: .insecureSchemeForClass(effective)))
+            throw VoinpError.egressDenied(.insecureSchemeForClass(effective))
+        }
+
+        return try await perform(request, host: host, reach: effective)
     }
 
     private func perform(_ request: EgressRequest, host: String, reach: EgressClass) async throws -> EgressResponse {

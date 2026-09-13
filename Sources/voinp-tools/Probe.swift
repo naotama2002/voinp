@@ -22,7 +22,7 @@ enum ProbeTool {
         print("到達範囲: \(await (try? HostClassifier().classify(host: host)).map { "\($0)" } ?? "判定不可")")
 
         let probe = EndpointProbe(gate: gate)
-        switch await probe.discover(rawInput: urlString, credential: ref) {
+        switch await probe.discover(rawInput: urlString) {
         case .success(let d):
             print("✅ 接続成功")
             print("   正規化 URL: \(d.normalizedBaseURL.absoluteString)")

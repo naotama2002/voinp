@@ -17,6 +17,33 @@ public enum InsertionTargetResolver {
             isSecureInput: isSecureInputFocused())
     }
 
+    /// **挿入の直前に、録音開始時と同じ相手が前面にいるかを確かめる。**
+    ///
+    /// `target` は録音開始時に解決したものだが、キーイベントは
+    /// `cghidEventTap` へ post するので、**実際には post した瞬間の最前面アプリ**へ届く。
+    /// 認識と LLM 校正の間には数秒あるため、その間にアプリを切り替えたり
+    /// パスワード欄をクリックしたりすると、発話内容が意図しない場所へ入る。
+    ///
+    /// 開始時の判定を信用せず、ここで取り直す:
+    /// - いまパスワード欄にフォーカスしている → 中止（ペーストボードにも残さない）
+    /// - 相手が変わった → 中止（テキストはペーストボードへ退避し、手動で貼れるようにする）
+    public static func assertStillCurrent(_ target: InsertionTarget) throws {
+        let now = current()
+
+        guard !now.isSecureInput else {
+            Log.insert.notice("挿入中止: 挿入直前にパスワード欄へフォーカスしていた")
+            throw VoinpError.secureInputActive
+        }
+
+        guard now.bundleIdentifier == target.bundleIdentifier,
+              now.processIdentifier == target.processIdentifier
+        else {
+            Log.insert.notice("挿入中止: フォーカスが移動した \(target.bundleIdentifier ?? "?", privacy: .public) → \(now.bundleIdentifier ?? "?", privacy: .public)")
+            throw VoinpError.focusChangedDuringRecognition(
+                expected: target.bundleIdentifier, actual: now.bundleIdentifier)
+        }
+    }
+
     /// `IsSecureEventInputEnabled` は SDK のヘッダから消滅しているので使わない。
     /// AX の subrole を見るほうが精度も高い
     /// （「どこかのプロセスが secure input を主張している」ではなく

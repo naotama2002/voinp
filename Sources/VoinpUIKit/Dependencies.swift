@@ -64,6 +64,13 @@ public struct Dependencies: Sendable {
 /// モデル探索の結果。エラーは表示用の文字列で受ける
 /// （UI 層がネットワーク層のエラー型を知る必要はない）。
 public enum ModelDiscoveryResult: Sendable {
-    case success([ModelInfo])
+    /// **探索で実際に通った URL をそのまま返す。**
+    ///
+    /// かつてはモデル一覧だけを返し、UI 側が入力文字列に `/v1` を付け直して
+    /// 保存していた。探索は複数の候補を試すので、`https://host/custom` で
+    /// 疎通できても保存されるのは `https://host/custom/v1` になり、
+    /// **接続テストは成功するのに校正だけ失敗する**という分かりにくい状態になった。
+    /// 確定した URL を持ち回れば、テストした対象と保存する対象が必ず一致する。
+    case success(baseURL: String, models: [ModelInfo])
     case failure(String)
 }

@@ -517,3 +517,41 @@ TypeWhisper (`Services/Cloud/KeychainService.swift`) はサービス名を秘密
 
 `descriptor.egress` が `.fixedHosts([...])` になり、
 `PrivacyPosture` が `.cloud` に変わってメニューバーのアイコンが変わる ([06](06-privacy.md))。
+
+## 勘所: API キーは接続先ホストごとに分ける
+
+固定の口座名 1 つ (`openai-compatible/apiKey`) に保存していた頃、
+**接続先を変えると前のサーバー用の API キーが新しいサーバーへ送られていた。**
+キー欄を空にして別ホストへ接続テストしても、保存済みのものが付与された。
+
+口座名にホストを含める (`openai-compatible/apiKey@<host>`)。
+未登録のホストでは `CredentialStore.read` が nil を返し、
+`EgressGate` は Authorization ヘッダを付けずに送る。
+
+さらに `EndpointProbe.discover` から `credential:` 引数を**削除**した。
+正規化後のホストから自分で引くので、呼び出し側が取り違えようがない。
+「気をつける」ではなく、渡せなくすることで防ぐ。
+
+`CredentialScopeTests` で固定している。
+
+## 勘所: 連続失敗カウンタは発話をまたいで共有する
+
+`disableAfterConsecutiveFailures` は設定にも UI にもあったが機能していなかった。
+発話ごとに `TextRefiner` を作り直しており、内部の `FailureCounter` も
+毎回 0 に戻っていたため。サーバーが落ちていても一時停止は永久に発動せず、
+喋るたびに `hardDeadlineMs` だけ待たされ続けた。
+
+カウンタは `AppModel` が持ち、`TextRefiner` へ注入する。
+クライアント自体は接続先を変えられるよう毎回作るが、カウンタは持ち越す。
+接続設定 (`settings.refinement`) を変えたら `clear()` する
+— 直したのに「連続失敗のため一時停止中」が出続けるのは理不尽なので。
+
+## 勘所: 探索で通った URL をそのまま保存する
+
+接続テストはモデル一覧だけを返し、UI 側が入力文字列に `/v1` を付け直して
+保存していた。探索は複数の候補を試すので、`https://host/custom` で疎通できても
+保存されるのは `https://host/custom/v1` になり、
+**接続テストは成功するのに校正だけ失敗する**という切り分けにくい状態になった。
+
+`ModelDiscoveryResult.success` に確定した `baseURL` を載せ、それを保存する。
+画面の入力欄にも書き戻して、テストした対象と保存した対象を一致させる。

@@ -23,7 +23,7 @@ public struct OpenAICompatibleClient: LLMClient, Sendable {
 
     public func listModels() async throws -> [ModelInfo] {
         let probe = EndpointProbe(gate: gate)
-        switch await probe.discover(rawInput: baseURL.absoluteString, credential: credential) {
+        switch await probe.discover(rawInput: baseURL.absoluteString) {
         case .success(let d): return d.models
         case .failure(let f): throw f
         }

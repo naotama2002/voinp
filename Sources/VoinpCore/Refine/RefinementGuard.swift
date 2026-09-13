@@ -16,6 +16,26 @@ public struct RefinementGuard: Sendable {
         case contentDrift(retained: Double)
         case numberMismatch([String])
         case refusal
+
+        /// ログに出してよい短い識別子。
+        ///
+        /// **`String(describing:)` を直接ログに流さないこと。**
+        /// `numberMismatch` は発話から抽出した数値そのものを持つため、
+        /// そのまま `.public` で出すと電話番号・金額・住所の番地が
+        /// システムログに残る。件数だけを出す。
+        /// 画面に出す文言（`TextRefiner.describe`）とは意図的に別物にしてある。
+        public var logCode: String {
+            switch self {
+            case .empty: "empty"
+            case .lengthRatio(let v): String(format: "lengthRatio(%.2f)", v)
+            case .scriptShift: "scriptShift"
+            case .unrequestedMarkdown: "unrequestedMarkdown"
+            case .answeredQuestion: "answeredQuestion"
+            case .contentDrift(let r): String(format: "contentDrift(%.2f)", r)
+            case .numberMismatch(let n): "numberMismatch(\(n.count)件)"
+            case .refusal: "refusal"
+            }
+        }
     }
 
     public enum Verdict: Sendable, Equatable {

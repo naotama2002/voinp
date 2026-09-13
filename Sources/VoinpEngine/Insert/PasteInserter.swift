@@ -27,10 +27,10 @@ public actor PasteInserter: TextInserter {
     }
 
     public func insert(_ text: String, into target: InsertionTarget) async throws {
-        guard !target.isSecureInput else {
-            Log.insert.notice("挿入中止: パスワード欄にフォーカス")
-            throw VoinpError.secureInputActive
-        }
+        // **録音開始時の判定だけでは足りない。**
+        // ⌘V は post した瞬間の最前面アプリへ届くので、認識と校正を待つ間に
+        // 切り替えられていたら別のアプリへ貼ってしまう。直前に取り直す。
+        try await MainActor.run { try InsertionTargetResolver.assertStillCurrent(target) }
 
         // **CGPreflightPostEventAccess() でゲートしない。**
         // TCC の結果はプロセス内でキャッシュされるため、許可済みでも

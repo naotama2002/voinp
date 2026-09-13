@@ -17,6 +17,8 @@ public enum VoinpError: Error, Equatable, Sendable {
     case axSilentNoop
     case secureInputActive
     case pasteVerificationUnavailable
+    /// 認識・校正を待つ間に、フォーカスが別のアプリへ移った
+    case focusChangedDuringRecognition(expected: String?, actual: String?)
 
     // 送信ゲート
     case egressDenied(EgressDenialReason)

@@ -53,6 +53,31 @@ public struct CredentialRef: Hashable, Codable, Sendable {
     public init(account: String) { self.account = account }
 }
 
+public extension CredentialRef {
+    /// OpenAI 互換エンドポイントの API キー。**接続先ホストごとに分ける。**
+    ///
+    /// かつては固定の口座名 1 つに保存していた。そのため接続先を変えると、
+    /// **前のサーバー用の API キーが新しいサーバーへ送られていた**
+    /// （キー欄を空にしても、保存済みのものが付与された）。
+    /// ホストを口座名に含めれば、未登録のホストでは `read` が nil を返し、
+    /// `EgressGate` は Authorization ヘッダを付けずに送る。
+    /// 取り違えを「気をつける」ではなく構造で防ぐのが狙い。
+    static func openAICompatible(host: String?) -> CredentialRef? {
+        guard let h = host?.trimmingCharacters(in: .whitespaces).lowercased(), !h.isEmpty
+        else { return nil }
+        return CredentialRef(account: "openai-compatible/apiKey@\(h)")
+    }
+
+    /// URL 文字列から。スキームが無い入力も受ける（`example.com:1234` など）。
+    static func openAICompatible(urlString: String) -> CredentialRef? {
+        let raw = urlString.trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty else { return nil }
+        if let host = URL(string: raw)?.host { return openAICompatible(host: host) }
+        // スキームが無いと URL は host を返さないので、補って解釈し直す。
+        return openAICompatible(host: URL(string: "http://" + raw)?.host)
+    }
+}
+
 public protocol CredentialStore: Sendable {
     func read(_ ref: CredentialRef) throws -> String?
     func write(_ value: String, to ref: CredentialRef) throws

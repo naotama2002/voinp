@@ -26,19 +26,23 @@ let makeClient: @Sendable (Settings) -> (any LLMClient)? = { settings in
     let c = settings.refinement.openaiCompatible
     guard settings.refinement.provider == "openai-compatible",
           let url = URL(string: c.baseURL) else { return nil }
+    // **資格情報は接続先ホストにひも付ける。**
+    // 共通の口座名を渡していた頃は、接続先を変えると前のサーバー用の
+    // API キーがそのまま新しいサーバーへ送られていた。
     return OpenAICompatibleClient(
         baseURL: url, model: c.model,
-        credential: c.requiresAPIKey ? CredentialRef(account: "openai-compatible/apiKey") : nil,
+        credential: c.requiresAPIKey ? CredentialRef.openAICompatible(host: url.host) : nil,
         gate: gate)
 }
 
 // モデル探索は closure で渡す。UI 層がネットワークの型を知らずに済む。
+// 資格情報は `EndpointProbe` が正規化後のホストから自分で引くので、ここでは渡さない。
 let discover: @Sendable (String) async -> ModelDiscoveryResult = { input in
-    let probe = EndpointProbe(gate: gate)
-    let ref = CredentialRef(account: "openai-compatible/apiKey")
-    switch await probe.discover(rawInput: input, credential: ref) {
-    case .success(let d): return .success(d.models)
-    case .failure(let f): return .failure(f.message)
+    switch await EndpointProbe(gate: gate).discover(rawInput: input) {
+    case .success(let d):
+        return .success(baseURL: d.normalizedBaseURL.absoluteString, models: d.models)
+    case .failure(let f):
+        return .failure(f.message)
     }
 }
 

@@ -221,3 +221,45 @@ struct GuardThresholdTests {
         if case .accept = v { Issue.record("無関係な内容を通した") }
     }
 }
+
+@Suite("プロンプトライブラリ")
+struct PromptLibraryTests {
+
+    @Test("front-matter 付き Markdown を読める")
+    func parsesFrontMatter() {
+        let text = """
+            ---
+            id: mypreset
+            name: 自分用
+            order: 60
+            allowMarkdown: true
+            contentRetention: none
+            ---
+            ここが本文です。
+            """
+        let p = PromptLibrary.parse(text, defaultID: "fallback")
+        #expect(p?.id == "mypreset")
+        #expect(p?.name == "自分用")
+        #expect(p?.body == "ここが本文です。")
+        #expect(p?.guardPolicy.allowMarkdown == true)
+        #expect(p?.guardPolicy.contentRetention == nil)
+    }
+
+    @Test("front-matter が無ければファイル名を id にする")
+    func fallsBackToFilename() {
+        let p = PromptLibrary.parse("本文だけ", defaultID: "plain")
+        #expect(p?.id == "plain")
+        #expect(p?.body == "本文だけ")
+    }
+
+    @Test("保存した内容を読み戻せる")
+    func roundTrip() {
+        let original = Preset(id: "x", name: "テスト", order: 5, body: "本文\n複数行",
+                              guardPolicy: GuardPolicy(allowMarkdown: true))
+        let parsed = PromptLibrary.parse(PromptLibrary.serialize(original), defaultID: "y")
+        #expect(parsed?.id == "x")
+        #expect(parsed?.name == "テスト")
+        #expect(parsed?.body == "本文\n複数行")
+        #expect(parsed?.guardPolicy.allowMarkdown == true)
+    }
+}

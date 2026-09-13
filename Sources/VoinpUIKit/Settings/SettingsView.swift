@@ -4,27 +4,99 @@ import VoinpEngine
 
 struct SettingsView: View {
     let model: AppModel
+    @State private var section: Section = .general
+
+    /// 設定の項目。
+    /// タブだと増えたときに「>>」へ潰れて選べなくなるので、サイドバーにする。
+    enum Section: String, CaseIterable, Identifiable {
+        case general, recognition, refinement, insertion, privacy
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .general: "一般"
+            case .recognition: "音声認識"
+            case .refinement: "校正"
+            case .insertion: "テキスト挿入"
+            case .privacy: "プライバシー"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .general: "gearshape"
+            case .recognition: "waveform"
+            case .refinement: "wand.and.sparkles"
+            case .insertion: "text.cursor"
+            case .privacy: "lock"
+            }
+        }
+
+        /// サイドバーの見出し。関連する項目をまとめる。
+        var group: String {
+            switch self {
+            case .general: ""
+            case .recognition, .refinement: "音声入力"
+            case .insertion: "出力"
+            case .privacy: "セキュリティ"
+            }
+        }
+    }
 
     var body: some View {
-        TabView {
-            GeneralSettings(model: model)
-                .tabItem { Label("一般", systemImage: "gearshape") }
-            RecognitionSettings(model: model)
-                .tabItem { Label("音声認識", systemImage: "waveform") }
-            InsertionSettings(model: model)
-                .tabItem { Label("テキスト挿入", systemImage: "text.cursor") }
-            RefinementSettings(model: model)
-                .tabItem { Label("校正", systemImage: "wand.and.sparkles") }
-            PrivacySettings(model: model)
-                .tabItem { Label("プライバシー", systemImage: "lock") }
+        NavigationSplitView {
+            List(selection: $section) {
+                ForEach(groupedSections, id: \.0) { group, items in
+                    if group.isEmpty {
+                        ForEach(items) { row($0) }
+                    } else {
+                        SwiftUI.Section(group) { ForEach(items) { row($0) } }
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 240)
+        } detail: {
+            ScrollView {
+                content
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
+            }
+            .navigationTitle(section.title)
         }
-        .frame(width: 560, height: 440)
+        // ウィンドウ側でサイズを決めるので、ここでは下限だけ示す。
+        .frame(minWidth: 640, minHeight: 420)
+    }
+
+    private var groupedSections: [(String, [Section])] {
+        var order: [String] = []
+        var map: [String: [Section]] = [:]
+        for s in Section.allCases {
+            if map[s.group] == nil { order.append(s.group) }
+            map[s.group, default: []].append(s)
+        }
+        return order.map { ($0, map[$0] ?? []) }
+    }
+
+    private func row(_ s: Section) -> some View {
+        Label(s.title, systemImage: s.icon).tag(s)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch section {
+        case .general: GeneralSettings(model: model)
+        case .recognition: RecognitionSettings(model: model)
+        case .refinement: RefinementSettings(model: model)
+        case .insertion: InsertionSettings(model: model)
+        case .privacy: PrivacySettings(model: model)
+        }
     }
 }
 
 // MARK: - 一般
 
-private struct GeneralSettings: View {
+struct GeneralSettings: View {
     let model: AppModel
 
     var body: some View {
@@ -66,7 +138,7 @@ private struct GeneralSettings: View {
 
 // MARK: - 音声認識
 
-private struct RecognitionSettings: View {
+struct RecognitionSettings: View {
     let model: AppModel
     @State private var termsText: String = ""
 
@@ -121,7 +193,7 @@ private struct RecognitionSettings: View {
 
 // MARK: - テキスト挿入
 
-private struct InsertionSettings: View {
+struct InsertionSettings: View {
     let model: AppModel
 
     var body: some View {
@@ -160,7 +232,7 @@ private struct InsertionSettings: View {
 
 // MARK: - プライバシー
 
-private struct PrivacySettings: View {
+struct PrivacySettings: View {
     let model: AppModel
 
     var body: some View {

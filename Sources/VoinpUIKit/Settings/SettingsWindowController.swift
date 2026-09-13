@@ -25,8 +25,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             return
         }
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 400),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(x: 0, y: 0, width: 780, height: 520),
+            // サイドバーがあるのでリサイズできたほうがよい。
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered, defer: false)
         w.title = "Voinp 設定"
         w.isReleasedWhenClosed = false

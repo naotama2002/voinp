@@ -361,6 +361,49 @@ public final class AppModel {
         refreshPermissions()   // この中で新しい設定で張り直される
     }
 
+    // MARK: - プロンプト
+
+    private let promptLibrary = PromptLibrary()
+
+    /// 選べるプリセット（組み込み + ユーザー定義）。
+    public var presets: [Preset] { promptLibrary.load() }
+
+    public func preset(id: String) -> Preset { promptLibrary.preset(id: id) }
+
+    /// ユーザーが編集したものか（組み込みを上書きしているか）。
+    public func isPresetCustomized(_ id: String) -> Bool { promptLibrary.isCustomized(id: id) }
+
+    public func savePrompt(id: String, name: String, body: String) {
+        let base = promptLibrary.preset(id: id)
+        let updated = Preset(id: id, name: name.isEmpty ? base.name : name,
+                             order: base.order, body: body,
+                             baseOverride: base.baseOverride, skipsLLM: base.skipsLLM,
+                             guardPolicy: base.guardPolicy, temperature: base.temperature)
+        do {
+            try promptLibrary.save(updated)
+            Log.refine.info("プロンプトを保存: \(id, privacy: .public)")
+        } catch {
+            Log.refine.error("プロンプトを保存できません: \(String(describing: error), privacy: .public)")
+            lastError = "プロンプトを保存できませんでした"
+        }
+        promptsRevision += 1
+    }
+
+    public func resetPrompt(id: String) {
+        try? promptLibrary.resetToBuiltin(id: id)
+        promptsRevision += 1
+    }
+
+    public func openPromptsDirectory() {
+        let dir = promptLibrary.directory
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(dir)
+    }
+
+    /// プロンプトを保存・削除したときに UI を更新させるためのカウンタ。
+    /// ファイルの内容は @Observable が追えないので、明示的に通知する。
+    private(set) var promptsRevision = 0
+
     // MARK: - 校正の設定
 
     /// API キーを Keychain に保存する。**設定ファイルには書かない。**

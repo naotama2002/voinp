@@ -44,7 +44,8 @@ enum ProbeTool {
             baseURL: URL(string: urlString + "/v1")!, model: model.id,
             credential: ref, gate: gate)
 
-        let sample = "えーと、今日はサイボウズの東京本社に出張に行って、その後すみだ水族館に行きました。あのー、Kintoneのゴルフボールがあってそれを購入しちゃいましたよ"
+        let sample = ProcessInfo.processInfo.environment["VOINP_SAMPLE"]
+            ?? "えーと、今日はサイボウズの東京本社に出張に行って、その後すみだ水族館に行きました。あのー、Kintoneのゴルフボールがあってそれを購入しちゃいましたよ"
         print("\n--- 校正テスト ---")
         print("入力: \(sample)")
 

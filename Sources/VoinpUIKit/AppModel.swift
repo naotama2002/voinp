@@ -61,13 +61,14 @@ public final class AppModel {
         // start() 時点の値を閉じ込めると、設定を変えても再起動するまで
         // 反映されない（校正プロンプトを変えても効かない、という形で顕在化した）。
         // 呼ばれるたびに現在の設定を読む。
-        let client = dependencies.llmClients.first
+        let makeClient = dependencies.makeLLMClient
         let coord = DictationCoordinator(
             settings: settings,
             provider: dependencies.speechProvider,
             inserter: DictationCoordinator.makeInserter(settings),
             refine: { [weak self] text in
-                guard let client, let current = await self?.currentSettings else { return text }
+                guard let makeClient, let current = await self?.currentSettings,
+                      let client = makeClient(current) else { return text }
                 var policy = TextRefiner.Policy()
                 policy.hardDeadline = .milliseconds(current.refinement.hardDeadlineMs)
                 policy.disableAfterConsecutiveFailures =

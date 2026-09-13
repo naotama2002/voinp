@@ -6,7 +6,11 @@ import VoinpEngine
 ///
 /// `VoinpUIKit` はネットワーク側の型を知らない。実装は実行ターゲットが注入する。
 public struct Dependencies: Sendable {
-    public var llmClients: [any LLMClient]
+    /// 設定から LLM クライアントを組み立てる。
+    ///
+    /// **実体を持たない。** 起動時に作って抱えると、設定で接続先を変えても
+    /// 古い URL のまま呼び続けることになる（実際にそうなっていた）。
+    public var makeLLMClient: (@Sendable (Settings) -> (any LLMClient)?)?
     public var settings: Settings
     /// 音声認識の実装。差し替え可能にしてあるので、
     /// ダウンロード UI の確認などに別実装を挿せる。
@@ -22,13 +26,13 @@ public struct Dependencies: Sendable {
     /// 設定が読めなかった理由。非 nil の間は通信を全拒否する（fail closed）。
     public var configError: String?
 
-    public init(llmClients: [any LLMClient] = [],
+    public init(makeLLMClient: (@Sendable (Settings) -> (any LLMClient)?)? = nil,
                 settings: Settings = Settings(),
                 configError: String? = nil,
                 speechProvider: (any TranscriptionProvider)? = nil,
                 credentials: (any CredentialStore)? = nil,
                 discoverModels: (@Sendable (String) async -> ModelDiscoveryResult)? = nil) {
-        self.llmClients = llmClients
+        self.makeLLMClient = makeLLMClient
         self.settings = settings
         self.configError = configError
         self.speechProvider = speechProvider ?? Dependencies.defaultSpeechProvider()
@@ -47,14 +51,14 @@ public struct Dependencies: Sendable {
     /// ネットワークを含まない共通部分。
     public static func base() -> Dependencies { Dependencies() }
 
-    public func withLLM(_ clients: [any LLMClient]) -> Dependencies {
+    public func withLLM(_ make: @escaping @Sendable (Settings) -> (any LLMClient)?) -> Dependencies {
         var copy = self
-        copy.llmClients = clients
+        copy.makeLLMClient = make
         return copy
     }
 
     /// 校正機能を UI に出すか。オフライン版では常に false。
-    public var supportsRefinement: Bool { !llmClients.isEmpty }
+    public var supportsRefinement: Bool { makeLLMClient != nil }
 }
 
 /// モデル探索の結果。エラーは表示用の文字列で受ける

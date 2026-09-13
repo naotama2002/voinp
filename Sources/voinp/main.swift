@@ -20,16 +20,16 @@ let gate = EgressGate(
     },
     credentials: credentials)
 
-var clients: [any LLMClient] = []
-let refinement = loaded.settings.refinement
-if refinement.provider == "openai-compatible",
-   let url = URL(string: refinement.openaiCompatible.baseURL) {
-    clients.append(OpenAICompatibleClient(
-        baseURL: url,
-        model: refinement.openaiCompatible.model,
-        credential: refinement.openaiCompatible.requiresAPIKey
-            ? CredentialRef(account: "openai-compatible/apiKey") : nil,
-        gate: gate))
+// **クライアントは呼ばれるたびに作る。**
+// 起動時に作って抱えると、設定で接続先を変えても古い URL のまま呼び続ける。
+let makeClient: @Sendable (Settings) -> (any LLMClient)? = { settings in
+    let c = settings.refinement.openaiCompatible
+    guard settings.refinement.provider == "openai-compatible",
+          let url = URL(string: c.baseURL) else { return nil }
+    return OpenAICompatibleClient(
+        baseURL: url, model: c.model,
+        credential: c.requiresAPIKey ? CredentialRef(account: "openai-compatible/apiKey") : nil,
+        gate: gate)
 }
 
 // モデル探索は closure で渡す。UI 層がネットワークの型を知らずに済む。
@@ -42,7 +42,7 @@ let discover: @Sendable (String) async -> ModelDiscoveryResult = { input in
     }
 }
 
-VoinpRoot.run(Dependencies(llmClients: clients,
+VoinpRoot.run(Dependencies(makeLLMClient: makeClient,
                            settings: loaded.settings,
                            configError: loaded.error,
                            credentials: credentials,

@@ -23,7 +23,7 @@ public struct HostClassifier: Sendable {
     }
 
     /// 文字列が IP リテラルならその場で分類する。
-    static func classifyLiteral(_ host: String) -> EgressClass? {
+    public static func classifyLiteral(_ host: String) -> EgressClass? {
         let h = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
         guard h.contains(where: { $0.isNumber }) || h.contains(":") else { return nil }
         guard isIPLiteral(h) else { return nil }

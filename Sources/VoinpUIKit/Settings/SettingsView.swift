@@ -13,10 +13,12 @@ struct SettingsView: View {
                 .tabItem { Label("音声認識", systemImage: "waveform") }
             InsertionSettings(model: model)
                 .tabItem { Label("テキスト挿入", systemImage: "text.cursor") }
+            RefinementSettings(model: model)
+                .tabItem { Label("校正", systemImage: "wand.and.sparkles") }
             PrivacySettings(model: model)
                 .tabItem { Label("プライバシー", systemImage: "lock") }
         }
-        .frame(width: 520, height: 400)
+        .frame(width: 560, height: 440)
     }
 }
 

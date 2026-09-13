@@ -38,7 +38,7 @@ let package = Package(
         // モデル取得などの開発用ユーティリティ
         .executableTarget(
             name: "voinp-tools",
-            dependencies: ["VoinpEngine"],
+            dependencies: ["VoinpEngine", "VoinpNet", "VoinpProviders"],
             swiftSettings: strict),
 
         // ── テスト ────────────────────────────────────────────────

@@ -11,6 +11,19 @@ import VoinpEngine
 @main
 struct Tools {
     static func main() async {
+        // LLM の疎通確認モード
+        if CommandLine.arguments.contains("--probe-llm") {
+            let args = CommandLine.arguments
+            guard let i = args.firstIndex(of: "--probe-llm"), i + 1 < args.count else {
+                print("使い方: voinp-tools --probe-llm <URL> [--key <APIキー>]")
+                exit(1)
+            }
+            let url = args[i + 1]
+            let key = args.firstIndex(of: "--key").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
+            await ProbeTool.run(urlString: url, apiKey: key)
+            return
+        }
+
         let provider = AppleSpeechProvider()
         var args = Array(CommandLine.arguments.dropFirst())
 

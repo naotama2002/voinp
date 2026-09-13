@@ -55,10 +55,30 @@ public final class AppModel {
     public func start() {
         hud = HUDPanelController(model: self)
 
+        // 校正の実体。LLM クライアントが無ければ素通し。
+        let refiner = dependencies.llmClients.first.map { client in
+            TextRefiner(client: client,
+                        model: settings.refinement.openaiCompatible.model,
+                        policy: {
+                            var p = TextRefiner.Policy()
+                            p.hardDeadline = .milliseconds(settings.refinement.hardDeadlineMs)
+                            p.disableAfterConsecutiveFailures =
+                                settings.refinement.disableAfterConsecutiveFailures
+                            p.maxOutputTokens = settings.refinement.maxOutputTokens
+                            return p
+                        }())
+        }
+        let presetID = settings.refinement.defaultPresetID
+
         let coord = DictationCoordinator(
             settings: settings,
             provider: dependencies.speechProvider,
-            inserter: DictationCoordinator.makeInserter(settings))
+            inserter: DictationCoordinator.makeInserter(settings),
+            refine: { text in
+                guard let refiner else { return text }
+                let outcome = await refiner.refine(text, preset: .builtin(id: presetID))
+                return outcome.text
+            })
         coordinator = coord
 
         tasks.append(Task { [weak self] in
@@ -339,6 +359,32 @@ public final class AppModel {
         hotkey?.stop()
         hotkey = nil
         refreshPermissions()   // この中で新しい設定で張り直される
+    }
+
+    // MARK: - 校正の設定
+
+    /// API キーを Keychain に保存する。**設定ファイルには書かない。**
+    public func storeAPIKey(_ key: String) {
+        guard let store = dependencies.credentials else { return }
+        let ref = CredentialRef(account: "openai-compatible/apiKey")
+        do {
+            try store.write(key, to: ref)
+        } catch {
+            Log.config.error("API キーを保存できません: \(String(describing: error), privacy: .public)")
+            lastError = "API キーを保存できませんでした"
+        }
+    }
+
+    /// まだ保存していないホストへモデル一覧を取りに行くための一時許可。
+    ///
+    /// ホスト許可リストは設定から**導出**されるので、保存前の URL は通らない。
+    /// ユーザーが「接続」を押した直後だけ、**そのホスト・モデル探索用途のみ・60 秒**
+    /// という限定で通す。マスタースイッチと到達範囲の制限はそのまま効く。
+    public func allowProbe(for rawURL: String) {
+        guard let host = URL(string: rawURL)?.host
+                ?? URL(string: "https://" + rawURL)?.host else { return }
+        ProbeAllowance.shared.grant(host: host)
+        Log.net.info("探索を一時許可: \(host, privacy: .public)（60 秒）")
     }
 
     /// 選べる言語。取得済みかどうかは別途 modelReadiness で示す。

@@ -143,6 +143,9 @@ public actor DictationCoordinator {
             }
             // 校正は失敗しても生原稿が返る。ここで分岐は要らない。
             let result = await refine(text)
+            if result != text {
+                Log.refine.info("校正あり: \(text.count, privacy: .public) → \(result.count, privacy: .public) 文字")
+            }
             await dispatch(.refinementFinished(text: result))
 
         case .waitForModifierRelease(let text):

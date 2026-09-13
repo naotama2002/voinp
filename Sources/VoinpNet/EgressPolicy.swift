@@ -58,9 +58,14 @@ public struct EgressPolicySnapshot: Equatable, Sendable {
         let maxClass = settings.privacy.allowedEgressClasses
             .compactMap(EgressClass.init(name:)).max() ?? .loopback
 
+        // 設定画面で「接続」を押した直後だけ、未保存のホストを探索できるようにする。
+        let candidate = ProbeAllowance.shared.current().map {
+            ProbeCandidate(host: $0, port: 443, expiresAt: .now.advanced(by: .seconds(60)))
+        }
+
         return EgressPolicySnapshot(
             masterAllow: true, maxClass: maxClass, allowedHosts: hosts,
-            allowedPurposes: [.modelDiscovery, .refine], probeCandidate: nil)
+            allowedPurposes: [.modelDiscovery, .refine], probeCandidate: candidate)
     }
 }
 

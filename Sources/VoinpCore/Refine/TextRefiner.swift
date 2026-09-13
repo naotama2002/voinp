@@ -46,7 +46,7 @@ public struct TextRefiner: Sendable {
         // LM Studio を閉じた人が毎回 4 秒待たされるのを防ぐ。
         if await failures.isTripped(limit: policy.disableAfterConsecutiveFailures) {
             return Outcome(text: transcript, usedRefinement: false,
-                           reason: "校正を一時停止中（連続失敗）")
+                           reason: "連続失敗のため一時停止中")
         }
 
         let assembly = builder.assemble(transcript: transcript, preset: preset)
@@ -77,13 +77,29 @@ public struct TextRefiner: Sendable {
                 await failures.reset()
                 Log.refine.notice("校正を棄却: \(String(describing: reason), privacy: .public)")
                 return Outcome(text: transcript, usedRefinement: false,
-                               reason: "整形結果を採用しませんでした")
+                               reason: "LLM の出力を棄却（\(Self.describe(reason))）")
             }
         } catch {
             await failures.record()
             Log.refine.error("校正に失敗: \(String(describing: error), privacy: .public)")
             return Outcome(text: transcript, usedRefinement: false,
-                           reason: "整形できませんでした")
+                           reason: "LLM の呼び出しに失敗")
+        }
+    }
+}
+
+extension TextRefiner {
+    /// 棄却理由を短い日本語にする。HUD に出す。
+    static func describe(_ r: RefinementGuard.Rejection) -> String {
+        switch r {
+        case .empty: "空の応答"
+        case .lengthRatio(let v): String(format: "長さが %.1f 倍", v)
+        case .scriptShift: "言語が変わった"
+        case .unrequestedMarkdown: "箇条書きにされた"
+        case .answeredQuestion: "質問に答えてしまった"
+        case .contentDrift: "内容が変わりすぎ"
+        case .numberMismatch(let n): "数値が消えた（\(n.joined(separator: ", "))）"
+        case .refusal: "応答を拒否された"
         }
     }
 }

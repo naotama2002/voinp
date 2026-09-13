@@ -51,17 +51,26 @@ struct HUDView: View {
         VStack(alignment: .leading, spacing: 8) {
             labeled("認識", c.recognized, tint: .secondary)
             Divider()
-            if c.didChange {
-                labeled("校正", c.refined, tint: .primary)
-            } else {
-                HStack(spacing: 6) {
-                    Text("校正").font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.tertiary)
-                    Text("変更なし").font(.system(size: 11)).foregroundStyle(.tertiary)
-                }
+            switch c {
+            case .changed(_, let refined):
+                labeled("校正", refined, tint: .primary)
+            case .unchanged:
+                status("校正", "実行したが変更なし", color: .secondary)
+            case .skipped(_, let reason):
+                // 実行されなかったことを明示する。
+                // 「変更なし」と同じ表示にすると原因が分からない。
+                status("校正", reason.map { "実行されず（\($0)）" } ?? "実行されず",
+                       color: .orange)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func status(_ label: String, _ text: String, color: Color) -> some View {
+        HStack(spacing: 6) {
+            Text(label).font(.system(size: 10, weight: .medium)).foregroundStyle(.tertiary)
+            Text(text).font(.system(size: 11)).foregroundStyle(color)
+        }
     }
 
     private func labeled(_ label: String, _ text: String, tint: Color) -> some View {

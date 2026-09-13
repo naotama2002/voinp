@@ -13,8 +13,9 @@ public actor DictationCoordinator {
         /// 「画面に出ていた文字列」と「入力された文字列」がずれないようにする。
         case finalText(String)
         /// 認識結果と校正結果の対。比較表示に使う。
-        /// 校正が何をしたのか（あるいは何もしなかったのか）を確認できる。
-        case refinementResult(recognized: String, refined: String)
+        /// **実行したかどうかも渡す。** 「変更なし」だけでは
+        /// LLM が何もしなかったのか、そもそも呼ばれなかったのか区別できない。
+        case refinementResult(recognized: String, refined: String, ran: Bool, note: String?)
         case snapshot(TranscriptSnapshot)
         case level(Float)
         case modelProgress(Double)
@@ -32,7 +33,7 @@ public actor DictationCoordinator {
     /// 設定で切り替わるので固定しない。
     private var inserter: any TextInserter
     private let capture = AudioCapture()
-    private let refine: @Sendable (String) async -> String
+    private let refine: @Sendable (String) async -> RefineOutcome
 
     private var session: (any TranscriptionSession)?
     private var pumpTask: Task<Void, Never>?
@@ -43,7 +44,7 @@ public actor DictationCoordinator {
     public init(settings: Settings,
                 provider: any TranscriptionProvider,
                 inserter: any TextInserter,
-                refine: @escaping @Sendable (String) async -> String = { $0 }) {
+                refine: @escaping @Sendable (String) async -> RefineOutcome = { RefineOutcome(text: $0, ran: false, note: "校正が設定されていません") }) {
         self.settings = settings
         self.provider = provider
         self.inserter = inserter
@@ -150,20 +151,26 @@ public actor DictationCoordinator {
 
         case .refine(let text):
             guard settings.refinement.enabled else {
+                Log.refine.info("校正: 設定で無効")
+                updateContinuation.yield(.refinementResult(
+                    recognized: text, refined: text, ran: false, note: "設定で無効"))
                 await dispatch(.refinementFinished(text: text)); return
             }
             // 校正は失敗しても生原稿が返る。ここで分岐は要らない。
-            let result = await refine(text)
+            let outcome = await refine(text)
             // 本文は出さない（privacy）。変化の有無と量だけ残す。
-            if result == text {
-                Log.refine.info("校正: 変化なし（\(text.count, privacy: .public) 文字）")
+            if !outcome.ran {
+                Log.refine.notice("校正: 実行されず（\(outcome.note ?? "理由不明", privacy: .public)）")
+            } else if outcome.text == text {
+                Log.refine.info("校正: 実行したが変化なし（\(text.count, privacy: .public) 文字）")
             } else {
-                Log.refine.info("校正: \(text.count, privacy: .public) → \(result.count, privacy: .public) 文字")
+                Log.refine.info("校正: \(text.count, privacy: .public) → \(outcome.text.count, privacy: .public) 文字")
             }
             // 実際に挿入する文字列を HUD に反映する。
-            updateContinuation.yield(.refinementResult(recognized: text, refined: result))
-            updateContinuation.yield(.finalText(result))
-            await dispatch(.refinementFinished(text: result))
+            updateContinuation.yield(.refinementResult(
+                recognized: text, refined: outcome.text, ran: outcome.ran, note: outcome.note))
+            updateContinuation.yield(.finalText(outcome.text))
+            await dispatch(.refinementFinished(text: outcome.text))
 
         case .waitForModifierRelease(let text):
             await waitForModifierRelease(text: text)
@@ -311,5 +318,16 @@ public actor DictationCoordinator {
         let flags = CGEventSource.flagsState(.hidSystemState)
         Log.session.error("修飾キーが 3 秒解放されない flags=\(String(flags.rawValue, radix: 16), privacy: .public)")
         await dispatch(.modifierWaitTimedOut)
+    }
+}
+
+/// 校正の結果。**実行したかどうかを含める。**
+/// 「変化なし」だけでは呼ばれなかったのか区別できない。
+public struct RefineOutcome: Sendable {
+    public let text: String
+    public let ran: Bool
+    public let note: String?
+    public init(text: String, ran: Bool, note: String? = nil) {
+        self.text = text; self.ran = ran; self.note = note
     }
 }

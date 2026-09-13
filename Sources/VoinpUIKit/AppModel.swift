@@ -67,8 +67,21 @@ public final class AppModel {
             provider: dependencies.speechProvider,
             inserter: DictationCoordinator.makeInserter(settings),
             refine: { [weak self] text in
-                guard let makeClient, let current = await self?.currentSettings,
-                      let client = makeClient(current) else { return text }
+                // 早期 return のたびに理由を残す。
+                // 黙って生原稿を返すと「校正が効かない」としか分からない。
+                guard let makeClient else {
+                    return RefineOutcome(text: text, ran: false, note: "ネットワーク機能なし")
+                }
+                guard let current = await self?.currentSettings else {
+                    return RefineOutcome(text: text, ran: false, note: "設定を取得できません")
+                }
+                guard let client = makeClient(current) else {
+                    return RefineOutcome(text: text, ran: false, note: "接続先が未設定")
+                }
+                guard !current.refinement.openaiCompatible.model.isEmpty else {
+                    return RefineOutcome(text: text, ran: false, note: "モデルが未選択")
+                }
+
                 var policy = TextRefiner.Policy()
                 policy.hardDeadline = .milliseconds(current.refinement.hardDeadlineMs)
                 policy.disableAfterConsecutiveFailures =
@@ -80,7 +93,9 @@ public final class AppModel {
                                           policy: policy)
                 let outcome = await refiner.refine(
                     text, preset: .fromUserPrompt(current.refinement.prompt))
-                return outcome.text
+                return RefineOutcome(text: outcome.text,
+                                     ran: outcome.usedRefinement,
+                                     note: outcome.reason)
             })
         coordinator = coord
 
@@ -167,10 +182,14 @@ public final class AppModel {
             snapshot = TranscriptSnapshot(committed: text, volatileTail: "")
             hud?.refreshLayout()
 
-        case .refinementResult(let recognized, let refined):
-            comparison = recognized == refined
-                ? .unchanged(recognized)
-                : .changed(recognized: recognized, refined: refined)
+        case .refinementResult(let recognized, let refined, let ran, let note):
+            comparison = if !ran {
+                .skipped(text: recognized, reason: note)
+            } else if recognized == refined {
+                .unchanged(recognized)
+            } else {
+                .changed(recognized: recognized, refined: refined)
+            }
             hud?.refreshLayout()
         case .level(let l): level = l
         case .modelProgress(let p): modelProgress = p
@@ -503,14 +522,17 @@ public final class AppModel {
 
 /// 認識結果と校正結果の比較。
 public enum RefinementComparison: Sendable, Equatable {
-    /// 校正が何も変えなかった。
+    /// 校正が実行され、何も変えなかった。
     case unchanged(String)
     case changed(recognized: String, refined: String)
+    /// 校正が実行されなかった。**「変化なし」と区別する。**
+    case skipped(text: String, reason: String?)
 
     public var recognized: String {
         switch self {
         case .unchanged(let t): t
         case .changed(let r, _): r
+        case .skipped(let t, _): t
         }
     }
 
@@ -518,6 +540,7 @@ public enum RefinementComparison: Sendable, Equatable {
         switch self {
         case .unchanged(let t): t
         case .changed(_, let r): r
+        case .skipped(let t, _): t
         }
     }
 

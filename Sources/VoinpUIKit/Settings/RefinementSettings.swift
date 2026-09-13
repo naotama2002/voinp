@@ -37,18 +37,18 @@ struct RefinementSettings: View {
 
     private var connectionSection: some View {
         Section {
-            // 入力欄は左詰め。LabeledContent だと右端に寄って読みにくい。
-            field("API の URL", placeholder: "https://llm.example.co.jp/v1") {
-                TextField("", text: $urlInput)
-                    .textFieldStyle(.roundedBorder)
-                    .multilineTextAlignment(.leading)
+            // **Form の中の TextField は自動でラベル付きレイアウトになり、
+            // 入力欄が右に寄る。** VStack で囲んでも Form の配置が優先されるので、
+            // labelsHidden() でラベル扱いを外してから自前で並べる。
+            VStack(alignment: .leading, spacing: 12) {
+                labeledField("API の URL", example: "https://llm.example.co.jp/v1") {
+                    TextField("", text: $urlInput)
+                }
+                labeledField("API キー", example: nil, hint: "不要なら空欄") {
+                    SecureField("", text: $apiKeyInput)
+                }
             }
-
-            field("API キー", placeholder: nil) {
-                SecureField("不要なら空欄", text: $apiKeyInput)
-                    .textFieldStyle(.roundedBorder)
-                    .multilineTextAlignment(.leading)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 10) {
                 Button(isProbing ? "接続中…" : "接続してモデルを取得") { probe() }
@@ -93,15 +93,27 @@ struct RefinementSettings: View {
     }
 
     /// ラベルを上に置いて入力欄を左詰めにする。
-    private func field<Content: View>(_ label: String, placeholder: String?,
-                                      @ViewBuilder content: () -> Content) -> some View {
+    ///
+    /// `labelsHidden()` が要点。これが無いと Form が入力欄をラベルの相方とみなし、
+    /// 右端に寄せてしまう（プレースホルダもラベル位置に描かれる）。
+    private func labeledField<Content: View>(
+        _ label: String, example: String?, hint: String? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
             content()
+                .textFieldStyle(.roundedBorder)
+                .labelsHidden()
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if let placeholder {
-                Text("例: \(placeholder)")
+            if let example {
+                Text("例: \(example)")
                     .font(.system(size: 10)).foregroundStyle(.tertiary)
+            }
+            if let hint {
+                Text(hint).font(.system(size: 10)).foregroundStyle(.tertiary)
             }
         }
     }
@@ -112,7 +124,11 @@ struct RefinementSettings: View {
         Section {
             TextEditor(text: $promptInput)
                 .font(.system(size: 12, design: .monospaced))
-                .frame(minHeight: 140)
+                .frame(maxWidth: .infinity, minHeight: 140, alignment: .leading)
+                .labelsHidden()
+                .scrollContentBackground(.hidden)
+                .padding(6)
+                .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 6))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
                 .onChange(of: promptInput) { _, new in
                     model.update { $0.refinement.prompt = new }

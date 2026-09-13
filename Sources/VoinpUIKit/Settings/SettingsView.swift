@@ -181,7 +181,13 @@ struct RecognitionSettings: View {
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                 TextEditor(text: $termsText)
                     .font(.system(size: 12, design: .monospaced))
-                    .frame(height: 110)
+                    // Form の中では幅を明示しないと右に寄る。
+                    .frame(maxWidth: .infinity, minHeight: 110, alignment: .leading)
+                    .labelsHidden()
+                    .scrollContentBackground(.hidden)
+                    .padding(6)
+                    .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
                     .onChange(of: termsText) { _, new in
                         let terms = new.split(separator: "\n")
                             .map { $0.trimmingCharacters(in: .whitespaces) }

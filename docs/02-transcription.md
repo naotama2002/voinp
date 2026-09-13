@@ -46,12 +46,34 @@ AssetInventory.maximumReservedLocales: 5
 ```swift
 DictationTranscriber(
     locale: jaJP,
-    contentHints: [.shortForm],
+    contentHints: [],                       // 下記の勘所を参照
     transcriptionOptions: [.punctuation],
     reportingOptions: [.volatileResults],
     attributeOptions: []
 )
 ```
+
+### 勘所: `.shortForm` を既定にしない
+
+短い発話を想定するヒントだが、**長い発話では区切りを誤り、
+意味のない断片が混ざる**。実際に
+
+```
+〜ゴルフをする。aゴルフは9時8分スタートで、終了は13時位かな。a13時位から〜
+```
+
+のように、和文の句読点の直後に単独の ASCII 文字が現れた
+（LLM ではなく認識側の混入であることを切り分けて確認した）。
+
+発話の長さは押す前には分からないので、既定ではヒントを渡さない。
+保険として `TranscriptBuffer.removeStrayFragments` が
+和文の句読点直後の単独 ASCII 英字を落とす。
+
+**この除去は英文を壊してはいけない。**
+最初の実装は "I went to Tokyo. A penguin…" の `I` と `A` を消していた。
+和文の句読点（。、！？）に続く場合だけに限定すること。
+直後が英字なら単語の途中なので残し（`。Slack` の S）、
+数字なら落とす（`。a13時` は認識の誤り）。
 
 ## 音声取り込み
 

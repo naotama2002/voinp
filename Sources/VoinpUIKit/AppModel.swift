@@ -57,28 +57,28 @@ public final class AppModel {
     public func start() {
         hud = HUDPanelController(model: self)
 
-        // 校正の実体。LLM クライアントが無ければ素通し。
-        let refiner = dependencies.llmClients.first.map { client in
-            TextRefiner(client: client,
-                        model: settings.refinement.openaiCompatible.model,
-                        policy: {
-                            var p = TextRefiner.Policy()
-                            p.hardDeadline = .milliseconds(settings.refinement.hardDeadlineMs)
-                            p.disableAfterConsecutiveFailures =
-                                settings.refinement.disableAfterConsecutiveFailures
-                            p.maxOutputTokens = settings.refinement.maxOutputTokens
-                            return p
-                        }())
-        }
-        let userPrompt = settings.refinement.prompt
-
+        // **設定値をここでコピーしない。**
+        // start() 時点の値を閉じ込めると、設定を変えても再起動するまで
+        // 反映されない（校正プロンプトを変えても効かない、という形で顕在化した）。
+        // 呼ばれるたびに現在の設定を読む。
+        let client = dependencies.llmClients.first
         let coord = DictationCoordinator(
             settings: settings,
             provider: dependencies.speechProvider,
             inserter: DictationCoordinator.makeInserter(settings),
-            refine: { text in
-                guard let refiner else { return text }
-                let outcome = await refiner.refine(text, preset: .fromUserPrompt(userPrompt))
+            refine: { [weak self] text in
+                guard let client, let current = await self?.currentSettings else { return text }
+                var policy = TextRefiner.Policy()
+                policy.hardDeadline = .milliseconds(current.refinement.hardDeadlineMs)
+                policy.disableAfterConsecutiveFailures =
+                    current.refinement.disableAfterConsecutiveFailures
+                policy.maxOutputTokens = current.refinement.maxOutputTokens
+
+                let refiner = TextRefiner(client: client,
+                                          model: current.refinement.openaiCompatible.model,
+                                          policy: policy)
+                let outcome = await refiner.refine(
+                    text, preset: .fromUserPrompt(current.refinement.prompt))
                 return outcome.text
             })
         coordinator = coord
@@ -207,6 +207,9 @@ public final class AppModel {
     /// あのフラグはプロセス内でキャッシュされ、システム設定で許可しても
     /// 再起動するまで false のままになることがある。
     /// **実際に event tap を作れたかどうか**で判定すれば、その問題を回避できる。
+    /// 現在の設定。閉包から安全に読むための入口。
+    var currentSettings: Settings { settings }
+
     public func refreshPermissions() {
         // 全部揃っていれば何もしない。
         // ホットキーが動いている限りアクセシビリティは効いており、

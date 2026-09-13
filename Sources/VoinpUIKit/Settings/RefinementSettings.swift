@@ -5,11 +5,11 @@ struct RefinementSettings: View {
     let model: AppModel
     @State private var urlInput = ""
     @State private var apiKeyInput = ""
+    @State private var promptInput = ""
     @State private var isProbing = false
     @State private var probeMessage: String?
     @State private var probeSucceeded = false
     @State private var models: [ModelInfo] = []
-    @State private var editingPrompt = false
 
     var body: some View {
         Form {
@@ -23,34 +23,31 @@ struct RefinementSettings: View {
 
             if model.settings.refinement.enabled {
                 connectionSection
-                presetSection
+                promptSection
             }
         }
         .formStyle(.grouped)
-        .onAppear { urlInput = model.settings.refinement.openaiCompatible.baseURL }
-        .sheet(isPresented: $editingPrompt) {
-            PromptEditorView(model: model, presetID: model.settings.refinement.defaultPresetID)
+        .onAppear {
+            urlInput = model.settings.refinement.openaiCompatible.baseURL
+            promptInput = model.settings.refinement.prompt
         }
     }
 
     // MARK: - 接続先
 
     private var connectionSection: some View {
-        Section("接続先") {
-            // LabeledContent だと入力欄が右詰めになって読みにくい。
-            // ラベルを上に置いて左詰めにする。
-            VStack(alignment: .leading, spacing: 4) {
-                Text("API の URL").font(.system(size: 11)).foregroundStyle(.secondary)
-                TextField("https://llm.example.co.jp", text: $urlInput)
+        Section {
+            // 入力欄は左詰め。LabeledContent だと右端に寄って読みにくい。
+            field("API の URL", placeholder: "https://llm.example.co.jp/v1") {
+                TextField("", text: $urlInput)
                     .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .multilineTextAlignment(.leading)
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("API キー（不要なら空欄）").font(.system(size: 11)).foregroundStyle(.secondary)
-                SecureField("", text: $apiKeyInput)
+            field("API キー", placeholder: nil) {
+                SecureField("不要なら空欄", text: $apiKeyInput)
                     .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .multilineTextAlignment(.leading)
             }
 
             HStack(spacing: 10) {
@@ -78,56 +75,71 @@ struct RefinementSettings: View {
             } else if !model.settings.refinement.openaiCompatible.model.isEmpty {
                 LabeledContent("モデル", value: model.settings.refinement.openaiCompatible.model)
             }
+        } header: {
+            // どの API に繋ぐのかを明示する。
+            HStack(spacing: 6) {
+                Text("接続先")
+                Text("OpenAI 互換 API")
+                    .font(.system(size: 10, weight: .medium))
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(.tint.opacity(0.15), in: Capsule())
+                    .foregroundStyle(.tint)
+            }
+        } footer: {
+            Text("OpenAI Chat Completions 形式（`/v1/chat/completions`）に対応したサーバーに接続します。LM Studio、Ollama、vLLM、llama.cpp server、社内の互換ゲートウェイなど。")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    // MARK: - プリセット
-
-    private var presetSection: some View {
-        Section("整形の種類") {
-            Picker("プリセット", selection: Binding(
-                get: { model.settings.refinement.defaultPresetID },
-                set: { v in model.update { $0.refinement.defaultPresetID = v } })) {
-                ForEach(model.presets, id: \.id) { p in
-                    Text(model.isPresetCustomized(p.id) ? p.name + "（編集済み）" : p.name)
-                        .tag(p.id)
-                }
+    /// ラベルを上に置いて入力欄を左詰めにする。
+    private func field<Content: View>(_ label: String, placeholder: String?,
+                                      @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.system(size: 11)).foregroundStyle(.secondary)
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let placeholder {
+                Text("例: \(placeholder)")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
             }
+        }
+    }
 
-            // **何をするプリセットなのかを実際のプロンプトで示す。**
-            // 一行の説明だけだと、選んだ結果どうなるか分からない。
-            let current = model.preset(id: model.settings.refinement.defaultPresetID)
-            if current.skipsLLM {
-                Text("LLM を呼びません。認識結果をそのまま挿入します。")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            } else {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("このプリセットが LLM に渡す指示")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                    ScrollView {
-                        Text(current.body.isEmpty
-                             ? "（追加の指示なし。フィラー除去と句読点整形の共通ルールだけが適用されます）"
-                             : current.body)
-                            .font(.system(size: 11, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                    }
-                    .frame(height: 90)
-                    .padding(8)
-                    .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+    // MARK: - プロンプト
 
-                    HStack(spacing: 10) {
-                        Button("編集…") { editingPrompt = true }
-                        if model.isPresetCustomized(current.id) {
-                            Button("組み込みに戻す") { model.resetPrompt(id: current.id) }
-                        }
-                        Spacer()
-                        Button("プロンプトのフォルダを開く") { model.openPromptsDirectory() }
-                            .buttonStyle(.link)
-                    }
-                    .font(.system(size: 11))
+    private var promptSection: some View {
+        Section {
+            TextEditor(text: $promptInput)
+                .font(.system(size: 12, design: .monospaced))
+                .frame(minHeight: 140)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
+                .onChange(of: promptInput) { _, new in
+                    model.update { $0.refinement.prompt = new }
                 }
+
+            if promptInput.isEmpty {
+                Text("空欄でも動きます。その場合は共通ルールだけが適用されます。")
+                    .font(.system(size: 11)).foregroundStyle(.tertiary)
             }
+        } header: {
+            Text("校正プロンプト")
+        } footer: {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("書き起こしたテキストと一緒に LLM へ渡す指示です。")
+                Text("次のルールは常に適用されるので、ここに書く必要はありません。")
+                    .foregroundStyle(.tertiary)
+                Text("""
+                    ・フィラー（「えー」「あのー」）を取り除く
+                    ・句読点を補う
+                    ・事実・固有名詞・数値を変えない
+                    ・内容に答えず、整形だけする
+                    ・前置きや説明を付けない
+                    """)
+                    .foregroundStyle(.tertiary)
+            }
+            .font(.system(size: 11))
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -175,52 +187,5 @@ struct RefinementSettings: View {
         var s = raw.trimmingCharacters(in: .whitespaces)
         while s.hasSuffix("/") { s.removeLast() }
         return s.hasSuffix("/v1") ? s : s + "/v1"
-    }
-}
-
-// MARK: - プロンプト編集
-
-struct PromptEditorView: View {
-    let model: AppModel
-    let presetID: String
-    @Environment(\.dismiss) private var dismiss
-    @State private var name = ""
-    @State private var body_ = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("プロンプトの編集").font(.headline)
-            Text("ここに書いた内容が、共通ルールに続けて LLM へ渡されます。")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-
-            TextField("名前", text: $name).textFieldStyle(.roundedBorder)
-
-            TextEditor(text: $body_)
-                .font(.system(size: 12, design: .monospaced))
-                .frame(minHeight: 220)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-
-            Text("共通ルール（フィラー除去・事実を変えない・前置きを付けない など）は常に適用されます。ここには追加の指示だけを書いてください。")
-                .font(.system(size: 10)).foregroundStyle(.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack {
-                Button("キャンセル") { dismiss() }
-                Spacer()
-                Button("保存") {
-                    model.savePrompt(id: presetID, name: name, body: body_)
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(20)
-        .frame(width: 520, height: 420)
-        .onAppear {
-            let p = model.preset(id: presetID)
-            name = p.name
-            body_ = p.body
-        }
     }
 }

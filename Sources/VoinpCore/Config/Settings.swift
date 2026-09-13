@@ -104,7 +104,9 @@ public struct Settings: Codable, Equatable, Sendable {
     public struct Refinement: Codable, Equatable, Sendable {
         public var enabled = false            // 既定オフ
         public var provider = "openai-compatible"
-        public var defaultPresetID = "clean"
+        /// 校正の追加指示。空なら共通ルールだけが適用される。
+        /// プリセットを廃し、ユーザーが自分で書く方式にした。
+        public var prompt = ""
         public var softDeadlineMs = 1500
         public var hardDeadlineMs = 4000
         public var maxRetries = 1
@@ -119,7 +121,7 @@ public struct Settings: Codable, Equatable, Sendable {
             let d = Self()
             enabled = c.value(.enabled, d.enabled)
             provider = c.value(.provider, d.provider)
-            defaultPresetID = c.value(.defaultPresetID, d.defaultPresetID)
+            prompt = c.value(.prompt, d.prompt)
             softDeadlineMs = c.value(.softDeadlineMs, d.softDeadlineMs)
             hardDeadlineMs = c.value(.hardDeadlineMs, d.hardDeadlineMs)
             maxRetries = c.value(.maxRetries, d.maxRetries)

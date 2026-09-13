@@ -22,32 +22,42 @@ public struct Preset: Sendable, Identifiable, Equatable {
         self.guardPolicy = guardPolicy; self.temperature = temperature
     }
 
-    /// 組み込みプリセット。`prompts/<id>.md` があれば上書きされる。
-    public static let builtins: [Preset] = [
-        Preset(id: "raw", name: "整形なし", order: 0, body: "", skipsLLM: true),
-        Preset(id: "clean", name: "そのまま整形", order: 10, body: ""),
-        Preset(id: "polite", name: "丁寧語に", order: 20, body: """
-            書き起こしを丁寧語（です・ます調）に統一してください。
-            敬語の誤用は修正しますが、過度にへりくだった表現にはしないでください。
-            内容・情報量は変えないでください。
-            """,
-            guardPolicy: GuardPolicy(lengthRatio: 0.7...1.8)),
-        Preset(id: "slack", name: "Slack 向けに短く", order: 30, body: """
-            チャットに投稿する前提で整形してください。
-            冗長な前置きは削ってよく、箇条書きにしたほうが読みやすければそうしてください。
-            ただし事実・数値・固有名詞・依頼内容は必ず残すこと。
-            """,
-            guardPolicy: GuardPolicy(lengthRatio: 0.4...1.2, allowMarkdown: true)),
-        Preset(id: "translate-en", name: "英訳", order: 40, body: """
-            書き起こしを自然な英語に翻訳してください。
-            出力は英語のみ。原文の丁寧さのレベルを保ち、訳注は加えないでください。
-            """,
-            guardPolicy: GuardPolicy(lengthRatio: 0.3...3.0, requireSameScript: false,
-                                     enforceQuestionShape: false, contentRetention: nil)),
-    ]
+    /// 設定に書かれた指示から組み立てる。
+    ///
+    /// **プリセットは持たない。** 用意した分類（丁寧語 / Slack 向け / 英訳…）は
+    /// 使う人の用途に合わず、選ばせること自体が手間だった。
+    /// ユーザーが自分の言葉で書いたものをそのまま渡す。
+    public static func fromUserPrompt(_ prompt: String) -> Preset {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Preset(id: "user", name: "校正", order: 0, body: trimmed,
+                      guardPolicy: policy(for: trimmed))
+    }
 
-    public static func builtin(id: String) -> Preset {
-        builtins.first { $0.id == id } ?? builtins[1]   // 既定は clean
+    /// 書かれた指示から、出力ガードの厳しさを推定する。
+    ///
+    /// 「英訳して」と書いた人の出力を、文字種チェックで棄却しては意味がない。
+    /// 指示の内容に応じて必要な検査だけを緩める。
+    static func policy(for prompt: String) -> GuardPolicy {
+        var p = GuardPolicy()
+        let lower = prompt.lowercased()
+
+        let translating = ["英訳", "translate", "英語に", "in english"]
+            .contains { lower.contains($0.lowercased()) }
+        if translating {
+            p.requireSameScript = false
+            p.enforceQuestionShape = false
+            p.contentRetention = nil
+            p.lengthRatio = 0.3...3.0
+        }
+
+        let shortening = ["短く", "簡潔", "要約", "まとめ"].contains { prompt.contains($0) }
+        if shortening { p.lengthRatio = 0.3...p.lengthRatio.upperBound }
+
+        let listing = ["箇条書き", "リスト", "markdown", "マークダウン"]
+            .contains { lower.contains($0.lowercased()) }
+        if listing { p.allowMarkdown = true }
+
+        return p
     }
 }
 

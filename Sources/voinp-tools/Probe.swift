@@ -50,7 +50,7 @@ enum ProbeTool {
         print("入力: \(sample)")
 
         let builder = PromptBuilder()
-        let assembly = builder.assemble(transcript: sample, preset: .builtin(id: "clean"))
+        let assembly = builder.assemble(transcript: sample, preset: .fromUserPrompt(""))
         do {
             let started = ContinuousClock.now
             let result = try await client.complete(CompletionRequest(
@@ -63,7 +63,7 @@ enum ProbeTool {
 
             let verdict = RefinementGuard().evaluate(
                 raw: sample, candidate: result.text,
-                policy: Preset.builtin(id: "clean").guardPolicy, nonce: assembly.nonce)
+                policy: Preset.fromUserPrompt("").guardPolicy, nonce: assembly.nonce)
             switch verdict {
             case .accept(let t): print("ガード: 通過\n最終: \(t)")
             case .reject(let r): print("ガード: 棄却 (\(r)) → 生原稿を挿入する")

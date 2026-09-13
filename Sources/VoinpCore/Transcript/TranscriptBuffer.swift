@@ -124,16 +124,23 @@ public struct TranscriptBuffer: Equatable, Sendable {
             let nextIndex = text.index(after: index)
             let next: Character? = nextIndex < text.endIndex ? text[nextIndex] : nil
 
-            // 単独の ASCII 英字で、直後が和字なら断片とみなす。
-            // 直前は問わない（句読点・空白・改行・和字のいずれでも起きる）。
-            // ただし直前が ASCII 英数字なら単語の一部なので残す（"Kintone" の e）。
+            // 単独の ASCII 英字が断片かどうかを判定する。
+            //
+            // 直前が ASCII 英数字なら単語の一部なので残す（"Kintone" の e）。
+            // そのうえで、
+            //   - 直後が和字      → 断片（"。a大阪"）
+            //   - 直前が和字で直後が ASCII 数字 → 断片（"。a13時"）
+            // とする。後者を入れないと "a13" のようなケースを取りこぼす。
             let previousIsASCIIWord = result.last.map {
                 $0.isASCII && ($0.isLetter || $0.isNumber)
             } ?? false
+            let previousIsJapanese = result.last.map(isJapanese) ?? false
+            let nextIsJapanese = next.map(isJapanese) ?? false
+            let nextIsASCIIDigit = next.map { $0.isASCII && $0.isNumber } ?? false
 
             let isStray = ch.isASCII && ch.isLetter
                 && !previousIsASCIIWord
-                && (next.map(isJapanese) ?? false)
+                && (nextIsJapanese || (previousIsJapanese && nextIsASCIIDigit))
 
             if isStray {
                 index = nextIndex

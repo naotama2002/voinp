@@ -64,8 +64,14 @@ public struct TranscriptBuffer: Equatable, Sendable {
         segments.map(\.text).joined() + untimedText
     }
 
+    /// 画面表示用。
+    ///
+    /// **挿入されるテキストと同じ加工を通す。**
+    /// 認識中の表示だけ素通しにしていたため、
+    /// 画面には「。a大阪に」と出るのに入力は「。大阪に」という食い違いが起きた。
     public func snapshot() -> TranscriptSnapshot {
-        TranscriptSnapshot(committed: committed, volatileTail: volatileTail)
+        TranscriptSnapshot(committed: Self.removeStrayFragments(committed),
+                           volatileTail: Self.removeStrayFragments(volatileTail))
     }
 
     /// 挿入直前に呼ぶ。前後の空白を落とした確定テキスト。
@@ -89,18 +95,28 @@ public struct TranscriptBuffer: Equatable, Sendable {
 
     /// 認識が区切りを誤ったときに混ざる、意味のない断片を落とす。
     ///
-    /// 日本語の発話に、和文の句読点の直後に単独の ASCII 文字が現れることがある
-    /// （「〜する。aゴルフは〜」）。和文中に単独の英字が来る余地はないので落とす。
+    /// 日本語の発話に単独の ASCII 英字が現れることがある
+    /// （「〜行ってきました。a大阪に〜」）。和文の中に単独の英字が来る余地はない。
     ///
-    /// **英文は壊さない。** "I went to Tokyo. A penguin…" の I や A は正当なので、
-    /// 和文の句読点（。、！？）に続く場合だけを対象にする。
-    /// ASCII の "." や " " の後ろは触らない。
-    static func removeStrayFragments(_ text: String) -> String {
+    /// **判定は「直後が和字か」で行う。** 直前の文字で判定していたときは
+    /// 句読点の直後しか拾えず、空白や改行を挟んだ場合に取りこぼした。
+    ///
+    /// **英文は壊さない。** "I went to Tokyo. A penguin…" の I や A は
+    /// 直後が ASCII なので対象にならない。
+    public static func removeStrayFragments(_ text: String) -> String {
         guard !text.isEmpty else { return text }
-        let japanesePunctuation: Set<Character> = ["。", "、", "！", "？"]
+
+        /// ひらがな・カタカナ・漢字・和文の記号。
+        func isJapanese(_ c: Character) -> Bool {
+            guard let v = c.unicodeScalars.first else { return false }
+            return (0x3040...0x309F).contains(v.value)   // ひらがな
+                || (0x30A0...0x30FF).contains(v.value)   // カタカナ
+                || (0x4E00...0x9FFF).contains(v.value)   // 漢字
+                || (0x3000...0x303F).contains(v.value)   // 和文の記号（。、「」）
+                || (0xFF00...0xFFEF).contains(v.value)   // 全角英数・記号
+        }
 
         var result = ""
-        var previous: Character?
         var index = text.startIndex
 
         while index < text.endIndex {
@@ -108,22 +124,22 @@ public struct TranscriptBuffer: Equatable, Sendable {
             let nextIndex = text.index(after: index)
             let next: Character? = nextIndex < text.endIndex ? text[nextIndex] : nil
 
-            // 直前が和文の句読点で、単独の ASCII 英字である場合に落とす。
-            //
-            // 直後が「英字」なら単語の途中なので残す（"。Slack" の S）。
-            // 直後が「数字」なら落とす。和文の直後に "a13" のような
-            // 英字 + 数字が来るのは認識の誤りで、正当な語ではない。
-            let nextIsLetter = next.map { $0.isASCII && $0.isLetter } ?? false
+            // 単独の ASCII 英字で、直後が和字なら断片とみなす。
+            // 直前は問わない（句読点・空白・改行・和字のいずれでも起きる）。
+            // ただし直前が ASCII 英数字なら単語の一部なので残す（"Kintone" の e）。
+            let previousIsASCIIWord = result.last.map {
+                $0.isASCII && ($0.isLetter || $0.isNumber)
+            } ?? false
+
             let isStray = ch.isASCII && ch.isLetter
-                && previous.map { japanesePunctuation.contains($0) } == true
-                && !nextIsLetter
+                && !previousIsASCIIWord
+                && (next.map(isJapanese) ?? false)
 
             if isStray {
                 index = nextIndex
-                continue          // previous は句読点のまま保つ
+                continue
             }
             result.append(ch)
-            previous = ch
             index = nextIndex
         }
         return result

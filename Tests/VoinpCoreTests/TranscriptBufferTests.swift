@@ -167,3 +167,55 @@ struct StrayFragmentTests {
         #expect(TranscriptBuffer.removeStrayFragments("") == "")
     }
 }
+
+@Suite("表示と挿入の一致")
+struct DisplayInsertConsistencyTests {
+
+    /// 画面に見えている文字列と、実際に挿入される文字列は一致しなければならない。
+    /// 断片除去を挿入経路にだけ入れていたため、
+    /// HUD には「。a大阪に」と出るのに入力は「。大阪に」になっていた。
+    @Test("認識中の表示にも断片除去が適用される")
+    func snapshotMatchesInsertedText() {
+        var b = TranscriptBuffer()
+        b.apply(.finalized(.init(text: "今日は東京へ。a大阪に帰ってきた。")))
+        #expect(b.snapshot().committed == b.bestEffortText,
+                "表示と挿入で加工が違ってはいけない")
+        #expect(!b.snapshot().committed.contains("。a"))
+    }
+
+    @Test("暫定結果の表示にも適用される")
+    func volatileAlsoFiltered() {
+        var b = TranscriptBuffer()
+        b.apply(.partial("今日は東京へ。a大阪に"))
+        #expect(!b.snapshot().volatileTail.contains("。a"))
+    }
+}
+
+@Suite("断片除去 — 直後の和字で判定する")
+struct StrayFragmentContextTests {
+
+    /// 直前の文字で判定していたときは句読点の直後しか拾えず、
+    /// 空白や改行を挟んだ場合に取りこぼしていた。
+    @Test("区切りの種類を問わず落とす", arguments: [
+        ("今日は東京へ。a大阪に行った。", "今日は東京へ。大阪に行った。"),
+        ("今日は東京へ a大阪に行った。", "今日は東京へ 大阪に行った。"),
+        ("今日は東京へ行った a大阪にも行った", "今日は東京へ行った 大阪にも行った"),
+    ])
+    func removesRegardlessOfSeparator(_ pair: (String, String)) {
+        #expect(TranscriptBuffer.removeStrayFragments(pair.0) == pair.1)
+    }
+
+    @Test("英単語の一部は残す")
+    func keepsWordCharacters() {
+        #expect(TranscriptBuffer.removeStrayFragments("Kintoneのゴルフボールを買った")
+                == "Kintoneのゴルフボールを買った")
+        #expect(TranscriptBuffer.removeStrayFragments("Slackに投稿する")
+                == "Slackに投稿する")
+    }
+
+    @Test("英文は壊さない")
+    func keepsEnglishSentences() {
+        let en = "I went to Tokyo. A penguin was there."
+        #expect(TranscriptBuffer.removeStrayFragments(en) == en)
+    }
+}

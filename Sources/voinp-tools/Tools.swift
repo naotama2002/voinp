@@ -11,6 +11,17 @@ import VoinpEngine
 @main
 struct Tools {
     static func main() async {
+        // 断片除去の確認モード
+        if CommandLine.arguments.contains("--check-fragments") {
+            let input = ProcessInfo.processInfo.environment["VOINP_SAMPLE"]
+                ?? "今日は東京へ。a大阪に。aそれから京都へ。"
+            let out = TranscriptBuffer.removeStrayFragments(input)
+            print("入力: \(input)")
+            print("出力: \(out)")
+            print(input == out ? "→ 変化なし（除去が効いていない）" : "→ \(input.count - out.count) 文字を除去")
+            return
+        }
+
         // LLM の疎通確認モード
         if CommandLine.arguments.contains("--probe-llm") {
             let args = CommandLine.arguments

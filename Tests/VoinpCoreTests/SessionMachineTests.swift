@@ -184,3 +184,37 @@ struct SessionMachineFallbackTests {
         #expect(texts.allSatisfy { !$0.isEmpty }, "空文字を貼り付けてはいけない")
     }
 }
+
+@Suite("SessionMachine — 表示と入力の一致")
+struct SessionMachineDisplayTests {
+    let target = InsertionTarget(bundleIdentifier: "x", processIdentifier: 1, isSecureInput: false)
+
+    /// HUD に出ていた文字列と、実際に挿入される文字列は一致しなければならない。
+    /// 暫定結果（「今日は」）と確定結果（「公共は」）は食い違うことがあるので、
+    /// 挿入に使うのは常に確定テキストで、画面もそれに合わせる。
+    @Test("挿入には確定テキストを使う")
+    func insertsFinalizedText() {
+        var m = SessionMachine()
+        let t = ContinuousClock.now
+        _ = m.handle(.startRequested(target: target), at: t)
+        _ = m.handle(.audioStarted, at: t)
+
+        // 暫定でいったん別の文字列が出る
+        _ = m.handle(.transcript(.partial("こんにちは。今日は雨ですよ")), at: t)
+        // 確定で訂正される
+        _ = m.handle(.transcript(.finalized(.init(text: "こんにちは。公共は雨ですよ。"))), at: t)
+
+        let t1 = t.advanced(by: .seconds(2))
+        _ = m.handle(.stopRequested, at: t1)
+        _ = m.handle(.transcriptionFinished(text: "こんにちは。公共は雨ですよ。"), at: t1)
+        _ = m.handle(.refinementFinished(text: "こんにちは。公共は雨ですよ。"), at: t1)
+        let actions = m.handle(.modifiersReleased, at: t1)
+
+        let inserted = actions.compactMap { a -> String? in
+            if case .insert(let text, _) = a { return text }
+            return nil
+        }
+        #expect(inserted == ["こんにちは。公共は雨ですよ。"],
+                "暫定結果ではなく確定結果を挿入すること")
+    }
+}

@@ -8,6 +8,10 @@ public actor DictationCoordinator {
 
     public enum Update: Sendable {
         case phase(SessionPhase)
+        /// 挿入が確定したテキスト。HUD をこれで置き換える。
+        /// 認識中の暫定結果と最終結果は食い違うことがあるため、
+        /// 「画面に出ていた文字列」と「入力された文字列」がずれないようにする。
+        case finalText(String)
         case snapshot(TranscriptSnapshot)
         case level(Float)
         case modelProgress(Double)
@@ -128,6 +132,10 @@ public actor DictationCoordinator {
             await resultTask?.value
             let text = buffer.bestEffortText
             Log.session.info("確定テキスト \(text.count, privacy: .public) 文字")
+            // 暫定結果と確定結果は食い違うことがある
+            // （「今日は」と出たあと確定で「公共は」になる等）。
+            // 画面を確定結果で置き換えて、見えているものと入るものを一致させる。
+            updateContinuation.yield(.finalText(text))
             await dispatch(.transcriptionFinished(text: text))
 
         case .abortEverything:
@@ -149,6 +157,8 @@ public actor DictationCoordinator {
             } else {
                 Log.refine.info("校正: \(text.count, privacy: .public) → \(result.count, privacy: .public) 文字")
             }
+            // 実際に挿入する文字列を HUD に反映する。
+            updateContinuation.yield(.finalText(result))
             await dispatch(.refinementFinished(text: result))
 
         case .waitForModifierRelease(let text):
@@ -234,8 +244,17 @@ public actor DictationCoordinator {
     }
 
     private func apply(event: TranscriptionEvent) {
+        let before = buffer.snapshot()
         buffer.apply(event)
-        updateContinuation.yield(.snapshot(buffer.snapshot()))
+        let after = buffer.snapshot()
+
+        // 暫定結果が確定時に訂正されることがある（「今日は」→「公共は」）。
+        // 本文は出さず、置き換わった事実と長さだけ残す。
+        if case .finalized = event, !before.volatileTail.isEmpty,
+           before.volatileTail != after.committed.suffix(before.volatileTail.count) {
+            Log.speech.info("暫定を訂正: \(before.volatileTail.count, privacy: .public) 文字 → 確定")
+        }
+        updateContinuation.yield(.snapshot(after))
     }
 
     private func emitLevel(_ level: Float) {

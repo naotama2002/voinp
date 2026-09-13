@@ -156,6 +156,12 @@ public final class AppModel {
         case .snapshot(let s):
             snapshot = s
             hud?.refreshLayout()   // テキストが伸びたら高さを追従させる
+
+        case .finalText(let text):
+            // 実際に挿入される文字列で置き換える。
+            // 暫定結果のまま残すと、画面と入力内容がずれて見える。
+            snapshot = TranscriptSnapshot(committed: text, volatileTail: "")
+            hud?.refreshLayout()
         case .level(let l): level = l
         case .modelProgress(let p): modelProgress = p
         case .feedback(let f):
@@ -163,10 +169,21 @@ public final class AppModel {
         }
     }
 
+    private var hudHideTask: Task<Void, Never>?
+
     private func updateHUD(for phase: SessionPhase) {
+        hudHideTask?.cancel()
         switch phase {
-        case .idle: hud?.hide()
-        default: hud?.show()
+        case .idle:
+            // すぐ閉じると、何が入力されたのか確認する間がない。
+            // 認識と挿入が食い違ったときに気づけるよう、少し残す。
+            hudHideTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(1200))
+                guard !Task.isCancelled else { return }
+                self?.hud?.hide()
+            }
+        default:
+            hud?.show()
         }
     }
 

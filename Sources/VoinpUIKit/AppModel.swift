@@ -14,6 +14,8 @@ public final class AppModel {
     public private(set) var snapshot: TranscriptSnapshot = .empty
     public private(set) var level: Float = 0
     public private(set) var missingPermissions: [SessionError.Permission] = []
+    /// 認識結果と校正結果の比較。設定で表示を切り替える。
+    public private(set) var comparison: RefinementComparison?
     public private(set) var modelProgress: Double?
     public private(set) var lastError: String?
     public private(set) var modelReadiness: Readiness?
@@ -152,6 +154,7 @@ public final class AppModel {
             phase = p
             if case .failed(let e) = p { lastError = HUDView.message(for: e) }
             if case .idle = p { snapshot = .empty; level = 0; modelProgress = nil }
+            if case .arming = p { comparison = nil }
             updateHUD(for: p)
         case .snapshot(let s):
             snapshot = s
@@ -161,6 +164,12 @@ public final class AppModel {
             // 実際に挿入される文字列で置き換える。
             // 暫定結果のまま残すと、画面と入力内容がずれて見える。
             snapshot = TranscriptSnapshot(committed: text, volatileTail: "")
+            hud?.refreshLayout()
+
+        case .refinementResult(let recognized, let refined):
+            comparison = recognized == refined
+                ? .unchanged(recognized)
+                : .changed(recognized: recognized, refined: refined)
             hud?.refreshLayout()
         case .level(let l): level = l
         case .modelProgress(let p): modelProgress = p
@@ -177,8 +186,11 @@ public final class AppModel {
         case .idle:
             // すぐ閉じると、何が入力されたのか確認する間がない。
             // 認識と挿入が食い違ったときに気づけるよう、少し残す。
+            // 比較表示中は読む時間が要るので長めに残す。
+            let delay: Duration = settings.ui.hudShowComparison && comparison != nil
+                ? .seconds(4) : .milliseconds(1200)
             hudHideTask = Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(1200))
+                try? await Task.sleep(for: delay)
                 guard !Task.isCancelled else { return }
                 self?.hud?.hide()
             }
@@ -525,5 +537,31 @@ public final class AppModel {
         let op = settings.refinement.openaiCompatible.operatorKind == "self-hosted"
             ? "自社運用と設定" : "外部サービス"
         return "整形テキスト → \(host)（\(op)）"
+    }
+}
+
+/// 認識結果と校正結果の比較。
+public enum RefinementComparison: Sendable, Equatable {
+    /// 校正が何も変えなかった。
+    case unchanged(String)
+    case changed(recognized: String, refined: String)
+
+    public var recognized: String {
+        switch self {
+        case .unchanged(let t): t
+        case .changed(let r, _): r
+        }
+    }
+
+    public var refined: String {
+        switch self {
+        case .unchanged(let t): t
+        case .changed(_, let r): r
+        }
+    }
+
+    public var didChange: Bool {
+        if case .changed = self { return true }
+        return false
     }
 }

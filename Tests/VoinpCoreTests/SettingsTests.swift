@@ -89,3 +89,19 @@ struct SettingsChangeDetectionTests {
         #expect(a.transcription != Settings().transcription, "用語ヒント")
     }
 }
+
+@Suite("HUD の比較表示設定")
+struct ComparisonSettingTests {
+    @Test("既定ではオフ")
+    func defaultsOff() {
+        #expect(Settings().ui.hudShowComparison == false)
+    }
+
+    @Test("設定ファイルから読める")
+    func decodesFromConfig() throws {
+        let json = #"{ "ui": { "hudShowComparison": true } }"#.data(using: .utf8)!
+        let s = try Settings.decode(json)
+        #expect(s.ui.hudShowComparison == true)
+        #expect(s.ui.hudShowText == true, "他の項目は既定値のまま")
+    }
+}

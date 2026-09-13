@@ -217,6 +217,9 @@ public struct Settings: Codable, Equatable, Sendable {
         public var showMenuBarPrivacyIndicator = true
         public var hudPosition = "bottomCenter"
         public var hudShowText = true         // false にすると認識テキストを HUD に出さない
+        /// 認識結果と校正結果を上下に並べて表示する。
+        /// 校正が何をしたのか（あるいは何もしなかったのか）を確認するための表示。
+        public var hudShowComparison = false
         public init() {}
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -224,6 +227,7 @@ public struct Settings: Codable, Equatable, Sendable {
             showMenuBarPrivacyIndicator = c.value(.showMenuBarPrivacyIndicator, d.showMenuBarPrivacyIndicator)
             hudPosition = c.value(.hudPosition, d.hudPosition)
             hudShowText = c.value(.hudShowText, d.hudShowText)
+            hudShowComparison = c.value(.hudShowComparison, d.hudShowComparison)
         }
     }
 }

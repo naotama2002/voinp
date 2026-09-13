@@ -130,6 +130,12 @@ struct GeneralSettings: View {
                     set: { v in model.update { $0.ui.hudShowText = v } }))
                 Text("画面共有中など、話した内容を見せたくない場合はオフにしてください。")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
+
+                Toggle("認識結果と校正結果を並べて表示する", isOn: Binding(
+                    get: { model.settings.ui.hudShowComparison },
+                    set: { v in model.update { $0.ui.hudShowComparison = v } }))
+                Text("校正が何を変えたのかを確認できます。表示は挿入後 4 秒間残ります。")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

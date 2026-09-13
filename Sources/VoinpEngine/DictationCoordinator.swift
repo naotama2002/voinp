@@ -12,6 +12,9 @@ public actor DictationCoordinator {
         /// 認識中の暫定結果と最終結果は食い違うことがあるため、
         /// 「画面に出ていた文字列」と「入力された文字列」がずれないようにする。
         case finalText(String)
+        /// 認識結果と校正結果の対。比較表示に使う。
+        /// 校正が何をしたのか（あるいは何もしなかったのか）を確認できる。
+        case refinementResult(recognized: String, refined: String)
         case snapshot(TranscriptSnapshot)
         case level(Float)
         case modelProgress(Double)
@@ -158,6 +161,7 @@ public actor DictationCoordinator {
                 Log.refine.info("校正: \(text.count, privacy: .public) → \(result.count, privacy: .public) 文字")
             }
             // 実際に挿入する文字列を HUD に反映する。
+            updateContinuation.yield(.refinementResult(recognized: text, refined: result))
             updateContinuation.yield(.finalText(result))
             await dispatch(.refinementFinished(text: result))
 

@@ -20,7 +20,11 @@ struct HUDView: View {
             WaveformView(level: model.level, active: model.phase.isListening)
                 .frame(height: 22)
 
-            if model.settings.ui.hudShowText, !model.snapshot.fullText.isEmpty {
+            // 比較表示。認識と校正の結果を上下に並べる。
+            // 校正が何をしたのか（あるいは何もしなかったのか）を確認するための表示。
+            if model.settings.ui.hudShowComparison, let comparison = model.comparison {
+                comparisonView(comparison)
+            } else if model.settings.ui.hudShowText, !model.snapshot.fullText.isEmpty {
                 // 確定分と暫定分を描き分ける。暫定は次の結果で丸ごと置き換わる。
                 //
                 // 喋り続けると必ず幅を超えるので、**末尾（最新）が見えるように切る**。
@@ -41,6 +45,37 @@ struct HUDView: View {
 
     static let width: CGFloat = 520
     static let maxLines = 6
+
+    @ViewBuilder
+    private func comparisonView(_ c: RefinementComparison) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            labeled("認識", c.recognized, tint: .secondary)
+            Divider()
+            if c.didChange {
+                labeled("校正", c.refined, tint: .primary)
+            } else {
+                HStack(spacing: 6) {
+                    Text("校正").font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                    Text("変更なし").font(.system(size: 11)).foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func labeled(_ label: String, _ text: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.system(size: 10, weight: .medium)).foregroundStyle(.tertiary)
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundStyle(tint)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(4)
+                .truncationMode(.head)
+                .textSelection(.enabled)
+        }
+    }
 
     private var icon: String {
         switch model.phase {

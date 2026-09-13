@@ -31,15 +31,22 @@ public struct RefinementGuard: Sendable {
         if repaired.isEmpty { return .reject(.empty) }
 
         // 長さ。要約（短すぎ）と「質問に答えた」（長すぎ）を捕まえる。
+        //
+        // **2 つの基準の和集合**であって、どちらか一方に切り替えるのではない。
+        // かつては「20 文字未満なら絶対差だけを見る」という排他分岐だったが、
+        // それだと policy.lengthRatio の緩和が短文にまったく届かなかった。
+        // 「英訳して」で 15 文字の日本語が 41 文字の英語になると、
+        // 比率 2.7 は緩和後の許容範囲 (0.3...3.0) に収まっているのに、
+        // 絶対差 26 が既定の slack 15 を超えて棄却されていた。
+        // 日本語→英語は文字数が素直に 2〜3 倍になるので、短文ほどこれに当たる。
         let rawCount = raw.count, newCount = repaired.count
-        if rawCount < 20 {
-            if abs(newCount - rawCount) > policy.absoluteSlackForShortInput {
-                return .reject(.lengthRatio(Double(newCount) / Double(max(rawCount, 1))))
-            }
-        } else {
-            let ratio = Double(newCount) / Double(rawCount)
-            if !policy.lengthRatio.contains(ratio) { return .reject(.lengthRatio(ratio)) }
-        }
+        let ratio = Double(newCount) / Double(max(rawCount, 1))
+        let withinRatio = policy.lengthRatio.contains(ratio)
+        // 絶対差は**短文専用の救済**。5 文字が 12 文字になるような、
+        // 比率で見ると大きいが実害のない伸びを通すためにある。
+        let withinSlack = rawCount < 20
+            && abs(newCount - rawCount) <= policy.absoluteSlackForShortInput
+        if !withinRatio, !withinSlack { return .reject(.lengthRatio(ratio)) }
 
         // 文字種。小さいモデルが勝手に英訳する失敗を捕まえる。
         if policy.requireSameScript, Self.japaneseRatio(raw) >= 0.3,

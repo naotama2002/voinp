@@ -220,6 +220,42 @@ struct GuardThresholdTests {
                                 policy: GuardPolicy(), nonce: "x")
         if case .accept = v { Issue.record("無関係な内容を通した") }
     }
+
+    /// 実際に踏んだ回帰。「英訳して」で 15 文字の日本語を訳すと 41 文字になり、
+    /// 緩和後の比率 (0.3...3.0) には収まるのに、
+    /// 20 文字未満だからと絶対差 (slack 15) だけで判定されて棄却されていた。
+    @Test("短い日本語の英訳を棄却しない")
+    func shortTranslationSurvives() {
+        let policy = Preset.fromUserPrompt("英訳して").guardPolicy
+        let v = guard_.evaluate(raw: "車選びはカーセンサーが最高だね",
+                                candidate: "CarSensor is the best for choosing a car.",
+                                policy: policy, nonce: "x")
+        guard case .accept = v else { Issue.record("正当な英訳を棄却した: \(v)"); return }
+    }
+
+    /// 絶対差は短文専用の救済として残っていること。
+    /// 句読点や助詞の補完で数文字伸びるのは比率で見ると大きいが、実害がない。
+    @Test("ごく短い入力の数文字の伸びは既定でも通す")
+    func shortInputSmallGrowthSurvives() {
+        let v = guard_.evaluate(raw: "あしたはれ",
+                                candidate: "明日は晴れです。",
+                                policy: GuardPolicy(), nonce: "x")
+        guard case .accept = v else { Issue.record("短文の正常な補完を棄却した: \(v)"); return }
+    }
+
+    /// 緩和していないのに短文が何倍にも膨らむのは、
+    /// 質問に答えてしまった典型なので、これまでどおり棄却する。
+    @Test("緩和なしの短文の暴走は棄却する")
+    func shortInputRunawayStillRejected() {
+        let v = guard_.evaluate(
+            raw: "車選びはカーセンサーが最高だね",
+            candidate: "車選びにおいては、カーセンサーというサービスが最も優れていると"
+                + "考えられます。理由としては掲載台数の多さと検索性の高さが挙げられます。",
+            policy: GuardPolicy(), nonce: "x")
+        guard case .reject(.lengthRatio) = v else {
+            Issue.record("短文の暴走を通した: \(v)"); return
+        }
+    }
 }
 
 @Suite("プロンプトからガードの厳しさを決める")

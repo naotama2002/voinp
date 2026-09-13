@@ -135,3 +135,35 @@ struct TranscriptBufferFallbackTests {
         #expect(b.bestEffortText.isEmpty)
     }
 }
+
+@Suite("認識の断片除去")
+struct StrayFragmentTests {
+
+    /// 認識が区切りを誤ると、句読点の直後に単独の ASCII 文字が混ざることがある
+    /// （「〜する。aゴルフは〜」）。日本語の発話に現れる余地がないので落とす。
+    @Test("句読点直後の単独 ASCII 文字を落とす")
+    func removesLoneLetterAfterPunctuation() {
+        let input = "ゴルフをする。aゴルフは9時スタートで、終了は13時かな。a13時から昼食。"
+        let out = TranscriptBuffer.removeStrayFragments(input)
+        #expect(out == "ゴルフをする。ゴルフは9時スタートで、終了は13時かな。13時から昼食。")
+    }
+
+    @Test("本来の英単語は残す")
+    func keepsRealWords() {
+        // 2 文字以上は断片ではないので残す
+        let input = "Kintoneのゴルフボールを買った。Slack に投稿する。"
+        #expect(TranscriptBuffer.removeStrayFragments(input) == input)
+    }
+
+    @Test("英文は壊さない")
+    func keepsEnglishText() {
+        let input = "I went to Tokyo. A penguin was there."
+        let out = TranscriptBuffer.removeStrayFragments(input)
+        #expect(out.contains("I went to Tokyo"), "英文の単独 I や A を壊さないこと")
+    }
+
+    @Test("空文字でも落ちない")
+    func handlesEmpty() {
+        #expect(TranscriptBuffer.removeStrayFragments("") == "")
+    }
+}

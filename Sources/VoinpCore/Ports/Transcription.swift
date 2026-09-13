@@ -29,11 +29,16 @@ public struct TranscriptionRequest: Sendable {
     public var termHints: [TermHint]
     public var wantsPartialResults: Bool
     public var punctuation: Bool
+    /// 短い発話を想定するか。
+    /// エンジンにヒントを渡すが、長い発話で誤ると断片が混ざるので既定は false。
+    public var expectsShortUtterance: Bool
 
     public init(locale: Locale, termHints: [TermHint] = [],
-                wantsPartialResults: Bool = true, punctuation: Bool = true) {
+                wantsPartialResults: Bool = true, punctuation: Bool = true,
+                expectsShortUtterance: Bool = false) {
         self.locale = locale; self.termHints = termHints
         self.wantsPartialResults = wantsPartialResults; self.punctuation = punctuation
+        self.expectsShortUtterance = expectsShortUtterance
     }
 }
 

@@ -63,9 +63,13 @@ public struct AppleSpeechProvider: TranscriptionProvider {
     }
 
     private func makeTranscriber(locale: Locale, request: TranscriptionRequest) -> DictationTranscriber {
+        // **`.shortForm` を既定にしない。**
+        // 短い発話を想定するヒントなので、長い発話では区切りを誤り、
+        // 意味のない断片（単独の "a" など）が混ざることがある。
+        // 長さが事前に分からない以上、ヒントなしのほうが安全。
         DictationTranscriber(
             locale: locale,
-            contentHints: [.shortForm],
+            contentHints: request.expectsShortUtterance ? [.shortForm] : [],
             transcriptionOptions: request.punctuation ? [.punctuation] : [],
             reportingOptions: request.wantsPartialResults ? [.volatileResults] : [],
             attributeOptions: [])

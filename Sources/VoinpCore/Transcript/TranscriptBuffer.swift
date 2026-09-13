@@ -81,8 +81,52 @@ public struct TranscriptBuffer: Equatable, Sendable {
     /// 確定が空なら暫定分を採用する。**ユーザーの発話を落とさないことを優先する。**
     public var bestEffortText: String {
         let committedText = finalText
-        if !committedText.isEmpty { return committedText }
-        return volatileTail.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = committedText.isEmpty
+            ? volatileTail.trimmingCharacters(in: .whitespacesAndNewlines)
+            : committedText
+        return Self.removeStrayFragments(text)
+    }
+
+    /// 認識が区切りを誤ったときに混ざる、意味のない断片を落とす。
+    ///
+    /// 日本語の発話に、和文の句読点の直後に単独の ASCII 文字が現れることがある
+    /// （「〜する。aゴルフは〜」）。和文中に単独の英字が来る余地はないので落とす。
+    ///
+    /// **英文は壊さない。** "I went to Tokyo. A penguin…" の I や A は正当なので、
+    /// 和文の句読点（。、！？）に続く場合だけを対象にする。
+    /// ASCII の "." や " " の後ろは触らない。
+    static func removeStrayFragments(_ text: String) -> String {
+        guard !text.isEmpty else { return text }
+        let japanesePunctuation: Set<Character> = ["。", "、", "！", "？"]
+
+        var result = ""
+        var previous: Character?
+        var index = text.startIndex
+
+        while index < text.endIndex {
+            let ch = text[index]
+            let nextIndex = text.index(after: index)
+            let next: Character? = nextIndex < text.endIndex ? text[nextIndex] : nil
+
+            // 直前が和文の句読点で、単独の ASCII 英字である場合に落とす。
+            //
+            // 直後が「英字」なら単語の途中なので残す（"。Slack" の S）。
+            // 直後が「数字」なら落とす。和文の直後に "a13" のような
+            // 英字 + 数字が来るのは認識の誤りで、正当な語ではない。
+            let nextIsLetter = next.map { $0.isASCII && $0.isLetter } ?? false
+            let isStray = ch.isASCII && ch.isLetter
+                && previous.map { japanesePunctuation.contains($0) } == true
+                && !nextIsLetter
+
+            if isStray {
+                index = nextIndex
+                continue          // previous は句読点のまま保つ
+            }
+            result.append(ch)
+            previous = ch
+            index = nextIndex
+        }
+        return result
     }
 
     public mutating func reset() {

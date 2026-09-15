@@ -11,8 +11,12 @@ if [ ! -s Package.resolved ]; then ok "Package.resolved は空"
 else bad "サードパーティ依存が入っている"; cat Package.resolved; fi
 
 echo "== 2. URLSession は VoinpNet の中だけ =="
-hits=$(grep -rln --include='*.swift' -E 'URLSession\(|NWConnection\(|CFSocket|getaddrinfo' Sources/ \
-       | grep -v '^Sources/VoinpNet/' || true)
+# **WebSocket を見落とさないこと。** session.webSocketTask(with:) は
+# URLSession\( に一致しないため、かつてはここを素通りした。
+# 音声をストリーミングする実装を VoinpProviders に書かれても気づけない状態だった。
+hits=$(grep -rln --include='*.swift' -E \
+       'URLSession\(|NWConnection\(|CFSocket|getaddrinfo|webSocketTask|URLSessionWebSocketTask|NWProtocolWebSocket' \
+       Sources/ | grep -v '^Sources/VoinpNet/' || true)
 if [ -z "$hits" ]; then ok "VoinpNet 以外にネットワーク API なし"
 else bad "VoinpNet 以外にネットワーク API がある:"; echo "$hits" | sed 's/^/       /'; fi
 

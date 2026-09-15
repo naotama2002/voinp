@@ -1,6 +1,40 @@
 import Foundation
 import VoinpCore
 
+/// 秘密をヘッダにどう載せるか。**値そのものはここに入らない（参照だけ）。**
+///
+/// かつては `Bearer ` を常に前置していた。そのため Azure OpenAI の
+/// `api-key: <生キー>` が表現できず、呼び出し側が自分でヘッダを組む
+/// ＝ 秘密を `String` で持つ、という逃げ方しか無かった。
+/// 置き方を型にすれば、「秘密はゲートの中で初めて値になる」性質を保ったまま方式を増やせる。
+public struct SecretInjection: Sendable, Hashable {
+    public enum Scheme: Sendable, Hashable {
+        /// `Authorization: Bearer <secret>`（OpenAI ほか）
+        case bearer
+        /// `api-key: <secret>`（Azure OpenAI）。前置きなしの生値。
+        case raw
+    }
+
+    public let ref: CredentialRef
+    public let scheme: Scheme
+
+    public init(ref: CredentialRef, scheme: Scheme) {
+        self.ref = ref
+        self.scheme = scheme
+    }
+
+    public static func bearer(_ ref: CredentialRef) -> Self { .init(ref: ref, scheme: .bearer) }
+    public static func raw(_ ref: CredentialRef) -> Self { .init(ref: ref, scheme: .raw) }
+
+    /// ヘッダに載せる文字列。**この関数だけが前置きを知っている。**
+    func headerValue(for secret: String) -> String {
+        switch scheme {
+        case .bearer: "Bearer \(secret)"
+        case .raw: secret
+        }
+    }
+}
+
 public struct EgressRequest: Sendable {
     public let purpose: EgressPurpose
     public let providerID: String
@@ -8,7 +42,7 @@ public struct EgressRequest: Sendable {
     public let method: String
     public let headers: [String: String]
     /// 秘密は参照で渡し、ゲートの内部で解決する。呼び出し側が値を持たない。
-    public let secretRefs: [String: CredentialRef]
+    public let secretRefs: [String: SecretInjection]
     public let body: Data?
     public let timeout: Duration
     /// 音声や書き起こしを含むか。監査とポリシー判定に使う。
@@ -16,7 +50,7 @@ public struct EgressRequest: Sendable {
 
     public init(purpose: EgressPurpose, providerID: String, url: URL,
                 method: String = "GET", headers: [String: String] = [:],
-                secretRefs: [String: CredentialRef] = [:], body: Data? = nil,
+                secretRefs: [String: SecretInjection] = [:], body: Data? = nil,
                 timeout: Duration = .seconds(8), carriesUserContent: Bool = false) {
         self.purpose = purpose; self.providerID = providerID; self.url = url
         self.method = method; self.headers = headers; self.secretRefs = secretRefs
@@ -43,6 +77,8 @@ public actor EgressGate {
     /// （本物は実機のシステム設定に依存し、CI で経路を再現できない）。
     private let proxyRoute: @Sendable (URL) async -> ProxyResolver.Route
     private let session: URLSession
+    /// 長寿命のストリーム専用。理由は init の中のコメント。
+    private let streamSession: URLSession
     private let audit: EgressAuditLog
 
     public init(policy: @escaping @Sendable () async -> EgressPolicySnapshot,
@@ -68,6 +104,49 @@ public actor EgressGate {
         self.session = URLSession(configuration: config,
                                   delegate: RedirectRefusingDelegate(),
                                   delegateQueue: nil)
+
+        // **ストリーム専用にもう 1 本持つ。**
+        // 上の session は httpMaximumConnectionsPerHost = 1 なので、
+        // 長寿命の WebSocket が同一ホストの 1 本を占有すると、
+        // 校正リクエストが裏で永久に待つことになる。
+        let streamConfig = URLSessionConfiguration.ephemeral
+        streamConfig.waitsForConnectivity = false
+        streamConfig.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        streamConfig.urlCache = nil
+        streamConfig.httpCookieStorage = nil
+        streamConfig.httpShouldSetCookies = false
+        self.streamSession = URLSession(configuration: streamConfig,
+                                        delegate: RedirectRefusingDelegate(),
+                                        delegateQueue: nil)
+    }
+
+    /// 音声などを流し続けるための双方向ストリームを開く。
+    ///
+    /// **判定は `send()` と完全に同じ `authorize` を通る。**
+    /// 違うのは I/O の形だけで、マスタースイッチもホスト許可も用途も
+    /// 到達範囲もプロキシもスキームも、1 つも省略していない。
+    ///
+    /// 監査は「接続時 1 件 + 切断時 1 件」。フレームごとには記録しない
+    /// （記録するとリングバッファが一掃されて過去の拒否記録が消える）。
+    public func connect(_ request: EgressRequest) async throws -> any EgressWebSocketChannel {
+        let auth = try await authorize(request, transport: .stream)
+
+        var urlRequest = URLRequest(url: request.url)
+        urlRequest.timeoutInterval = Double(request.timeout.components.seconds)
+        for (k, v) in request.headers { urlRequest.setValue(v, forHTTPHeaderField: k) }
+        urlRequest = Self.applyingSecrets(to: urlRequest, request.secretRefs, using: credentials)
+
+        let started = ContinuousClock.now
+        let task = streamSession.webSocketTask(with: urlRequest)
+        task.resume()
+        await audit.record(.streamOpened(host: auth.host, purpose: request.purpose,
+                                         reach: auth.effectiveClass,
+                                         handshake: ContinuousClock.now - started))
+
+        return AuditedWebSocketChannel(
+            inner: URLSessionWebSocketChannel(task: task),
+            host: auth.host, purpose: request.purpose, reach: auth.effectiveClass,
+            openedAt: started, audit: audit)
     }
 
     /// 判定 1〜6 を通った証拠。
@@ -92,8 +171,22 @@ public actor EgressGate {
         }
     }
 
+    /// 送信の形。**スキームの取り違えを構造的に止めるために持つ。**
+    /// `send(wss://)` も `connect(https://)` も判定の入口で落ちる。
+    enum Transport: Sendable {
+        case requestResponse   // http / https
+        case stream            // ws / wss
+
+        var allowedSchemes: Set<String> {
+            switch self {
+            case .requestResponse: ["http", "https"]
+            case .stream: ["ws", "wss"]
+            }
+        }
+    }
+
     public func send(_ request: EgressRequest) async throws -> EgressResponse {
-        let auth = try await authorize(request)
+        let auth = try await authorize(request, transport: .requestResponse)
         return try await perform(request, host: auth.host, reach: auth.effectiveClass)
     }
 
@@ -101,9 +194,20 @@ public actor EgressGate {
     ///
     /// `send` も、これから足す WebSocket 経路も、必ずここを通る。
     /// 経路ごとに手順を書き写すと、片方だけ緩い実装が入り込む。
-    private func authorize(_ request: EgressRequest) async throws -> Authorization {
+    private func authorize(_ request: EgressRequest,
+                           transport: Transport) async throws -> Authorization {
         let snapshot = await policy()
         let host = request.url.host ?? ""
+
+        // 0. スキームがこの送信形に合っているか。
+        //    ws を data(for:) に渡す / https を webSocketTask に渡す、という
+        //    取り違えをここで止める。手順 6 は「平文かどうか」しか見ないので別物。
+        let scheme = request.url.scheme?.lowercased() ?? ""
+        guard transport.allowedSchemes.contains(scheme) else {
+            await audit.record(.denied(host: host, purpose: request.purpose,
+                                       reason: .schemeNotAllowed(scheme)))
+            throw VoinpError.egressDenied(.schemeNotAllowed(scheme))
+        }
 
         // 1. マスタースイッチ。設定が壊れていれば denyAll が来るので fail closed。
         guard snapshot.masterAllow else {
@@ -138,7 +242,18 @@ public actor EgressGate {
         //    宛先が 127.0.0.1 でも、公開プロキシが適用されれば本文は社外へ出る。
         //    「分類して記録する」ではなく、許可判定そのものに含める。
         let effective: EgressClass
-        switch await proxyRoute(request.url) {
+        // **`wss` のまま聞かない。** `CFNetworkCopyProxiesForURL` と PAC の
+        // `FindProxyForURL` はスキーム文字列を見るので、PAC が
+        // `shExpMatch(url, "https:*")` のような分岐を持っていると
+        // `wss` は当たらず「直結」と誤答されうる。
+        // URLSession 自身がハンドシェイクを HTTP(S) として行う以上、
+        // 聞くべきなのは写像後の URL のほう。写像できなければ拒否する。
+        guard let probeURL = Self.proxyProbeURL(for: request.url) else {
+            await audit.record(.denied(host: host, purpose: request.purpose,
+                                       reason: .proxyChainUnknown))
+            throw VoinpError.egressDenied(.proxyChainUnknown)
+        }
+        switch await proxyRoute(probeURL) {
         case .direct:
             effective = reach
 
@@ -202,6 +317,44 @@ public actor EgressGate {
         }
     }
 
+    /// プロキシ問い合わせ用に `ws` / `wss` を `http` / `https` へ写像する。
+    ///
+    /// host / port / path / query はそのまま保つ。写像できなければ `nil` を返し、
+    /// 呼び出し側は「判定不能」として拒否する（直結とみなさない）。
+    static func proxyProbeURL(for url: URL) -> URL? {
+        let scheme = url.scheme?.lowercased()
+        let mapped: String? = switch scheme {
+        case "ws": "http"
+        case "wss": "https"
+        case "http", "https": scheme
+        default: nil
+        }
+        guard let mapped else { return nil }
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { return nil }
+        components.scheme = mapped
+        return components.url
+    }
+
+    /// 秘密を解決してヘッダに載せる。
+    ///
+    /// **空 / 未登録なら載せない。** これは接続先ごとに口座を分けている性質
+    /// （`CredentialRef.openAICompatible(host:)`）と対になっていて、
+    /// 未登録のホストへ前のサーバーの API キーが飛ぶのを防ぐ。
+    ///
+    /// `perform`（HTTP）と `connect`（WebSocket ハンドシェイク）の両方から呼ぶ。
+    /// WebSocket の認証もハンドシェイクの HTTP ヘッダなので、同じ関数で足りる。
+    static func applyingSecrets(to base: URLRequest,
+                                _ injections: [String: SecretInjection],
+                                using store: any CredentialStore) -> URLRequest {
+        var request = base
+        for (header, injection) in injections {
+            guard let secret = try? store.read(injection.ref), !secret.isEmpty else { continue }
+            request.setValue(injection.headerValue(for: secret), forHTTPHeaderField: header)
+        }
+        return request
+    }
+
     private func perform(_ request: EgressRequest, host: String, reach: EgressClass) async throws -> EgressResponse {
         var urlRequest = URLRequest(url: request.url)
         urlRequest.httpMethod = request.method
@@ -209,12 +362,7 @@ public actor EgressGate {
         urlRequest.timeoutInterval = Double(request.timeout.components.seconds)
         for (k, v) in request.headers { urlRequest.setValue(v, forHTTPHeaderField: k) }
 
-        // 秘密はここで初めて値になる。呼び出し側は参照しか持たない。
-        for (header, ref) in request.secretRefs {
-            if let secret = try? credentials.read(ref), !secret.isEmpty {
-                urlRequest.setValue("Bearer \(secret)", forHTTPHeaderField: header)
-            }
-        }
+        urlRequest = Self.applyingSecrets(to: urlRequest, request.secretRefs, using: credentials)
 
         let started = ContinuousClock.now
         do {

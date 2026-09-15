@@ -11,6 +11,14 @@ public struct EgressRecord: Sendable, Equatable {
         case allowed(status: Int)
         case denied(EgressDenialReason)
         case failed(errorCode: Int)
+        /// WebSocket のハンドシェイクが成立した。
+        case streamOpened
+        /// WebSocket が閉じた。**1 接続につき必ず 1 件。**
+        ///
+        /// フレームごとに記録してはいけない。60 秒の発話で数百件になり、
+        /// リングバッファ（既定 500 件）が一掃されて**過去の拒否記録が消える**。
+        /// 監査ログの目的そのものが壊れる。
+        case streamClosed(code: Int)
     }
 
     public let timestamp: Date
@@ -36,6 +44,25 @@ public struct EgressRecord: Sendable, Equatable {
                        reason: EgressDenialReason) -> EgressRecord {
         EgressRecord(timestamp: Date(), host: host, purpose: purpose, reach: nil,
                      bytesOut: 0, bytesIn: 0, durationMs: 0, outcome: .denied(reason))
+    }
+
+    static func streamOpened(host: String, purpose: EgressPurpose, reach: EgressClass,
+                            handshake: Duration) -> EgressRecord {
+        EgressRecord(timestamp: Date(), host: host, purpose: purpose, reach: reach,
+                     bytesOut: 0, bytesIn: 0,
+                     durationMs: Int(handshake.components.seconds * 1000
+                                     + handshake.components.attoseconds / 1_000_000_000_000_000),
+                     outcome: .streamOpened)
+    }
+
+    static func streamClosed(host: String, purpose: EgressPurpose, reach: EgressClass,
+                             code: EgressStreamCloseCode, bytesOut: Int, bytesIn: Int,
+                             duration: Duration) -> EgressRecord {
+        EgressRecord(timestamp: Date(), host: host, purpose: purpose, reach: reach,
+                     bytesOut: bytesOut, bytesIn: bytesIn,
+                     durationMs: Int(duration.components.seconds * 1000
+                                     + duration.components.attoseconds / 1_000_000_000_000_000),
+                     outcome: .streamClosed(code: code.rawValue))
     }
 
     static func failed(host: String, purpose: EgressPurpose, reason: Int) -> EgressRecord {

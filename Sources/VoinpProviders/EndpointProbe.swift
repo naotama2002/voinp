@@ -95,7 +95,7 @@ public struct EndpointProbe: Sendable {
         let request = EgressRequest(
             purpose: .modelDiscovery, providerID: "openai-compatible", url: url,
             headers: ["Accept": "application/json"],
-            secretRefs: credential.map { ["Authorization": $0] } ?? [:],
+            secretRefs: credential.map { ["Authorization": .bearer($0)] } ?? [:],
             timeout: .seconds(5), carriesUserContent: false)
 
         do {

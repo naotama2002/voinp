@@ -37,6 +37,8 @@ public enum EgressDenialReason: Equatable, Sendable {
     case loopbackDestinationWouldLeaveViaProxy
     case proxyChainUnknown
     case purposeNotAllowed(String)
+    /// この送信形に許されないスキーム（ws を HTTP 経路へ、等）
+    case schemeNotAllowed(String)
     case insecureSchemeForClass(EgressClass)
     case redirectRefused(from: String, to: String)
     case probeCandidateExpired

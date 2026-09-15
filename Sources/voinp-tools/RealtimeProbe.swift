@@ -20,6 +20,8 @@ enum RealtimeProbe {
         var baseURL = ""
         var model = ""
         var useKeychain = false
+        /// 鍵を置いた環境変数の名前。**値ではなく名前だけを持つ。**
+        var keyEnvName: String?
         var wavPath: String?
         var languages: [String] = ["ja", "en"]
         var keywords: [String] = []
@@ -56,10 +58,14 @@ enum RealtimeProbe {
             }
         }
 
-        print("鍵の口座: \(CredentialRef.service) / probe@\(host.lowercased())"
-              + "  ヘッダ: \(authHeader(for: host))")
-        print("  未登録なら: security add-generic-password -s \(CredentialRef.service)"
-              + " -a probe@\(host.lowercased()) -w")
+        if let env = options.keyEnvName {
+            print("鍵: 環境変数 \(env)  ヘッダ: \(authHeader(for: host))")
+        } else {
+            print("鍵: Keychain \(CredentialRef.service) / probe@\(host.lowercased())"
+                  + "  ヘッダ: \(authHeader(for: host))")
+            print("  未登録なら: security add-generic-password -s \(CredentialRef.service)"
+                  + " -a probe@\(host.lowercased()) -w")
+        }
 
         guard let credential = resolveCredentialRef(options, host: host) else {
             print("❌ API キーの置き場所が指定されていません（--key-env か --keychain）")
@@ -98,7 +104,7 @@ enum RealtimeProbe {
         let snapshot = EgressPolicySnapshot(
             masterAllow: true, maxClass: .publicInternet,
             allowedHosts: [host], allowedPurposes: [.transcribe], probeCandidate: nil)
-        let gate = EgressGate(policy: { snapshot }, credentials: KeychainStore())
+        let gate = EgressGate(policy: { snapshot }, credentials: store(options))
 
         for url in Self.candidates(from: base) {
             let started = ContinuousClock.now
@@ -117,9 +123,17 @@ enum RealtimeProbe {
                 continue
             }
 
+            // **必ず終わらせる。** `URLSessionWebSocketTask.receive()` は
+            // Swift の Task キャンセルを見ないので、時間で打ち切るには
+            // close() して待ちを解くしかない（自分で踏んだ）。
+            let watchdog = Task {
+                try? await Task.sleep(for: .seconds(source == nil ? 6 : 30))
+                await channel.close()
+            }
             let outcome = await configureAndRun(
                 channel: channel, options: options, rate: rate, source: source,
                 connectedAt: started)
+            watchdog.cancel()
             await channel.close()
 
             switch outcome {
@@ -205,6 +219,8 @@ enum RealtimeProbe {
 
             // 音声を送り切っていて、確定が出たら終わり
             if sentAudio, !finalized.isEmpty, pending.isEmpty { break }
+            // 音声を渡されていないなら、設定が通ったことを確かめた時点で十分
+            if source == nil, handshakeMs != nil { break }
         }
 
         guard let handshakeMs else { return .disconnected("session.updated が来ませんでした") }
@@ -334,13 +350,19 @@ enum RealtimeProbe {
         host.hasSuffix(".openai.azure.com") ? .raw(ref) : .bearer(ref)
     }
 
-    /// **キーの値には触れない。** Keychain の口座名を組み立てるだけ。
+    /// **キーの値には触れない。** 口座名を組み立てるだけ。
     ///
-    /// 環境変数からは読まない。読めてしまう経路を持たないほうが、
-    /// 「見ない」と約束するより強い。値が現れるのは `EgressGate.applyingSecrets` の中だけ。
+    /// 値が現れるのは `EgressGate.applyingSecrets` の中だけで、
+    /// この道具はヘッダを組み立てず、出力もしない。
     private static func resolveCredentialRef(_ options: Options, host: String) -> CredentialRef? {
-        guard options.useKeychain else { return nil }
-        return CredentialRef(account: "probe@\(host.lowercased())")
+        if let name = options.keyEnvName { return CredentialRef(account: name) }
+        if options.useKeychain { return CredentialRef(account: "probe@\(host.lowercased())") }
+        return nil
+    }
+
+    /// 鍵の置き場所に応じた `CredentialStore` を選ぶ。
+    private static func store(_ options: Options) -> any CredentialStore {
+        options.keyEnvName != nil ? EnvironmentCredentialStore() : KeychainStore()
     }
 
     private static func ms(since start: ContinuousClock.Instant) -> Int {
@@ -460,11 +482,24 @@ extension RealtimeProbe.Options {
         o.model = value("--model") ?? "gpt-live-transcribe"
         o.wavPath = value("--wav")
         o.delay = value("--delay") ?? "low"
-        o.useKeychain = true       // 鍵は Keychain のみ。環境変数経路は持たない
+        o.keyEnvName = value("--key-env")
+        o.useKeychain = o.keyEnvName == nil
         if let l = value("--languages") { o.languages = l.split(separator: ",").map(String.init) }
         if let k = value("--keywords") { o.keywords = k.split(separator: ",").map(String.init) }
         if let r = value("--rate"), let n = Int(r) { o.rates = [n] }
         o.compareWithApple = !arguments.contains("--no-compare")
         return o
     }
+}
+
+/// 環境変数に置かれた鍵を読む。**口座名が環境変数名そのもの。**
+///
+/// 読み出しは `EgressGate` の中でしか起こらず、値はヘッダに載る以外の経路へ出ない。
+/// 書き込みと削除は持たない（開発用の読み取り専用の口）。
+struct EnvironmentCredentialStore: CredentialStore {
+    func read(_ ref: CredentialRef) throws -> String? {
+        ProcessInfo.processInfo.environment[ref.account]
+    }
+    func write(_ value: String, to ref: CredentialRef) throws {}
+    func delete(_ ref: CredentialRef) throws {}
 }

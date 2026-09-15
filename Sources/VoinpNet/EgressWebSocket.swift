@@ -42,7 +42,10 @@ final class URLSessionWebSocketChannel: EgressWebSocketChannel, @unchecked Senda
     }
 
     func send(_ json: Data) async throws {
-        try await task.send(.data(json))
+        // **テキストフレームで送る。** Realtime API は
+        // "Expected a text WebSocket message; binary frames are not supported."
+        // を返す。JSON を .data で送って実際に踏んだ。
+        try await task.send(.string(String(decoding: json, as: UTF8.self)))
         counters.withLock { $0.out += json.count }
     }
 

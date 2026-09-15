@@ -20,8 +20,15 @@ struct SettingsPropagationTests {
     func insertionStrategy() {
         var paste = Settings(); paste.insertion.strategy = "paste"
         var keystroke = Settings(); keystroke.insertion.strategy = "keystroke"
-        #expect(DictationCoordinator.makeInserter(paste).identifier == "paste")
-        #expect(DictationCoordinator.makeInserter(keystroke).identifier == "keystroke")
+        // **`#expect` の中で Settings を渡す式を直接書かない。**
+        // マクロが失敗報告のために式を丸ごとコピーするが、Settings は
+        // 参照カウント付きフィールドが多く、ここで EXC_BAD_ACCESS で落ちる
+        // （outlined init with copy of Settings → RefCounts::incrementSlow）。
+        // 設定にフィールドを足した時点で踏んだ。値を先に受けてから比較する。
+        let pasteID = DictationCoordinator.makeInserter(paste).identifier
+        let keystrokeID = DictationCoordinator.makeInserter(keystroke).identifier
+        #expect(pasteID == "paste")
+        #expect(keystrokeID == "keystroke")
     }
 
     @Test("ペーストの細かい設定も渡る")
@@ -31,7 +38,8 @@ struct SettingsPropagationTests {
         s.insertion.pasteRestoreDelayMs = 500
         s.insertion.restoreClipboard = false
         // 生成できること自体を確認する（値は PasteInserter が保持する）
-        #expect(DictationCoordinator.makeInserter(s).identifier == "paste")
+        let identifier = DictationCoordinator.makeInserter(s).identifier
+        #expect(identifier == "paste")
     }
 
     @Test("校正プロンプトが指示として組み立てられる")

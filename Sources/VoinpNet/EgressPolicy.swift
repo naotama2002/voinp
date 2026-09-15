@@ -51,9 +51,21 @@ public struct EgressPolicySnapshot: Equatable, Sendable {
         guard !hasConfigError, settings.privacy.allowNetwork else { return .denyAll }
 
         var hosts = Set(settings.privacy.extraAllowlistHosts)
+
+        // **`.transcribe` をリテラルで書かない。** 下の 1 箇所だけが足せる。
+        // ここに書き足すと、5 条件の検査を通らずに音声が出る経路ができる。
+        var purposes: Set<EgressPurpose> = [.modelDiscovery, .refine]
+
         if settings.refinement.enabled, settings.refinement.provider == "openai-compatible",
            let h = URL(string: settings.refinement.openaiCompatible.baseURL)?.host {
             hosts.insert(h)
+        }
+
+        // **音声。** `cloudTranscriptionDestination` が 5 条件すべてを要求するので、
+        // 既定設定では必ず nil になり、`.transcribe` は一度も開かない。
+        if let audio = settings.cloudTranscriptionDestination {
+            hosts.insert(audio.host)
+            purposes.insert(.transcribe)
         }
         let maxClass = settings.privacy.allowedEgressClasses
             .compactMap(EgressClass.init(name:)).max() ?? .loopback
@@ -65,7 +77,7 @@ public struct EgressPolicySnapshot: Equatable, Sendable {
 
         return EgressPolicySnapshot(
             masterAllow: true, maxClass: maxClass, allowedHosts: hosts,
-            allowedPurposes: [.modelDiscovery, .refine], probeCandidate: candidate)
+            allowedPurposes: purposes, probeCandidate: candidate)
     }
 }
 

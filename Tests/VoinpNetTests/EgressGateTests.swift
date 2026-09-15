@@ -128,3 +128,48 @@ struct ProbeCandidateTests {
         #expect(!EgressPolicySnapshot.denyAll.masterAllow)
     }
 }
+
+/// 平文スキームの判定。
+///
+/// `Foundation` は URL のスキームを小文字化しないので、等値比較で書くと
+/// 大文字の `HTTP://` がすり抜ける。設定に大文字で書けば実際に到達するため、
+/// 公開ホストへ書き起こしテキストが平文で出る経路になっていた。
+@Suite("平文スキームの判定")
+struct PlaintextSchemeTests {
+
+    @Test("大文字小文字を問わず平文と判定する")
+    func caseInsensitive() {
+        for s in ["http", "HTTP", "Http", "hTTp"] {
+            #expect(EgressGate.isPlaintext(s), "『\(s)』を平文と判定すること")
+        }
+    }
+
+    /// WebSocket の平文経路は http と同じ危険度。
+    /// ここを落とすと音声がプロキシに丸見えのまま流れる。
+    @Test("ws も平文として扱う")
+    func webSocketIsPlaintext() {
+        for s in ["ws", "WS", "Ws"] {
+            #expect(EgressGate.isPlaintext(s), "『\(s)』を平文と判定すること")
+        }
+    }
+
+    @Test("TLS つきは平文ではない")
+    func tlsIsNotPlaintext() {
+        for s in ["https", "HTTPS", "wss", "WSS"] {
+            #expect(!EgressGate.isPlaintext(s), "『\(s)』は平文でないこと")
+        }
+    }
+
+    @Test("スキームが無い場合は平文とみなさない")
+    func nilScheme() {
+        #expect(!EgressGate.isPlaintext(nil))
+    }
+
+    /// 実際に踏んだ形。`Foundation` が小文字化しないことの固定。
+    @Test("URL から取り出したスキームは小文字化されない")
+    func foundationDoesNotLowercaseScheme() {
+        #expect(URL(string: "HTTP://example.com/x")?.scheme == "HTTP",
+                "小文字化されるようになったら、この検査の前提が変わる")
+        #expect(EgressGate.isPlaintext(URL(string: "HTTP://example.com/x")?.scheme))
+    }
+}

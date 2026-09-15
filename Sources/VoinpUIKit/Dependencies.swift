@@ -23,6 +23,12 @@ public struct Dependencies: Sendable {
     /// 依存することになり、オフライン版がビルドできなくなる
     /// （実際に壊れて気づいた）。合成ルートが closure で注入する。
     public var discoverModels: (@Sendable (String) async -> ModelDiscoveryResult)?
+    /// 設定からクラウド音声認識を組み立てる。
+    ///
+    /// **オフライン版では nil。** そのときクラウドは選べず、選ばれていても
+    /// 必ずローカルに倒れる。`speechProvider` と同じく実体を持たないのは、
+    /// 接続先やモデルを変えたときに古い設定のまま使い続けないため。
+    public var makeCloudSpeechProvider: (@Sendable (Settings) -> (any TranscriptionProvider)?)?
     /// 設定が読めなかった理由。非 nil の間は通信を全拒否する（fail closed）。
     public var configError: String?
 
@@ -31,14 +37,20 @@ public struct Dependencies: Sendable {
                 configError: String? = nil,
                 speechProvider: (any TranscriptionProvider)? = nil,
                 credentials: (any CredentialStore)? = nil,
-                discoverModels: (@Sendable (String) async -> ModelDiscoveryResult)? = nil) {
+                discoverModels: (@Sendable (String) async -> ModelDiscoveryResult)? = nil,
+                makeCloudSpeechProvider:
+                    (@Sendable (Settings) -> (any TranscriptionProvider)?)? = nil) {
         self.makeLLMClient = makeLLMClient
         self.settings = settings
         self.configError = configError
         self.speechProvider = speechProvider ?? Dependencies.defaultSpeechProvider()
         self.credentials = credentials
         self.discoverModels = discoverModels
+        self.makeCloudSpeechProvider = makeCloudSpeechProvider
     }
+
+    /// クラウド認識を UI に出すか。オフライン版では常に false。
+    public var supportsCloudTranscription: Bool { makeCloudSpeechProvider != nil }
 
     /// 環境変数で差し替えられるようにしておく（開発時の UI 確認用）。
     static func defaultSpeechProvider() -> any TranscriptionProvider {

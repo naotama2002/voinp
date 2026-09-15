@@ -50,6 +50,13 @@ public final class AppModel {
         self.dependencies = dependencies
         self.settings = dependencies.settings
         refreshPermissions()
+        speechRouter = RoutingTranscriptionProvider(
+            local: dependencies.speechProvider,
+            makeCloud: dependencies.makeCloudSpeechProvider,
+            settings: dependencies.settings,
+            onDegrade: { [weak self] in
+                Task { @MainActor in self?.noteCloudDegraded() }
+            })
     }
 
     // MARK: - 起動
@@ -62,6 +69,22 @@ public final class AppModel {
     /// 喋るたびに固定時間だけ待たされ続けていた。
     private let refineFailures = FailureCounter()
 
+    /// 設定に従って認識エンジンを選ぶ。**ここが唯一の音声認識の入口。**
+    /// `dependencies.speechProvider` を直接使わないこと（設定が効かなくなる）。
+    ///
+    /// `@ObservationIgnored` にしてあるのは、`@Observable` の追跡対象にすると
+    /// `lazy` も init アクセサも使えなくなるため。UI から観測する値ではない。
+    @ObservationIgnored private var speechRouter: RoutingTranscriptionProvider!
+
+    /// クラウドからローカルへ退避したことを画面に出す。
+    /// **黙って切り替えない。** 表示と実際の経路が食い違うのが一番よくない。
+    public private(set) var degradedToLocal = false
+
+    func noteCloudDegraded() {
+        degradedToLocal = true
+        Log.speech.notice("クラウド認識から この Mac の認識へ退避した")
+    }
+
     public func start() {
         hud = HUDPanelController(model: self)
 
@@ -72,7 +95,7 @@ public final class AppModel {
         let makeClient = dependencies.makeLLMClient
         let coord = DictationCoordinator(
             settings: settings,
-            provider: dependencies.speechProvider,
+            provider: speechRouter,
             inserter: DictationCoordinator.makeInserter(settings),
             refine: { [weak self] text in
                 // 早期 return のたびに理由を残す。
@@ -267,7 +290,7 @@ public final class AppModel {
     public func refreshModelReadiness() async {
         let id = settings.transcription.locale
         let request = TranscriptionRequest(locale: Locale(identifier: id))
-        let r = await dependencies.speechProvider.readiness(for: request)
+        let r = await speechRouter.readiness(for: request)
         Log.speech.info("モデル状態: locale=\(id, privacy: .public) readiness=\(String(describing: r), privacy: .public)")
         modelReadiness = r
     }
@@ -288,7 +311,7 @@ public final class AppModel {
             // **上限時間を設ける。** 失敗や停止でプログレスバーが永遠に回り続けると、
             // ユーザーは何が起きているか分からないまま待たされる（実際にそうなった）。
             try await withThrowingTaskGroup(of: Void.self) { group in
-                let provider = dependencies.speechProvider
+                let provider: any TranscriptionProvider = speechRouter
                 let locale = Locale(identifier: settings.transcription.locale)
                 group.addTask {
                     try await provider.downloadModel(for: locale) { p in
@@ -391,6 +414,8 @@ public final class AppModel {
         // 接続先やモデルを直したなら、一時停止を解いてもう一度試させる。
         // 直したのに「連続失敗のため一時停止中」が出続けるのは理不尽。
         let refinementChanged = next.refinement != settings.refinement
+        let transcriptionChanged = next.transcription != settings.transcription
+            || next.privacy.audioEgress != settings.privacy.audioEgress
         settings = next
 
         do {
@@ -400,10 +425,14 @@ public final class AppModel {
             lastError = "設定を保存できませんでした"
         }
 
+        // **認識エンジンの選択にも伝える。** 伝えないと設定を変えても
+        // 再起動するまで前のエンジンを使い続ける。
+        speechRouter.settingsChanged(next)
         Task { await coordinator?.update(settings: next) }
         if hotkeyChanged { restartHotkey() }
         if localeChanged { Task { await refreshModelReadiness() } }
         if refinementChanged { Task { [refineFailures] in await refineFailures.clear() } }
+        if transcriptionChanged { degradedToLocal = false }
     }
 
     /// ホットキーの記録中は既存のホットキーを止める。

@@ -168,6 +168,8 @@ actor AppleSpeechSession: TranscriptionSession {
     private let analyzer: SpeechAnalyzer
     private let inputContinuation: AsyncStream<AnalyzerInput>.Continuation
     private let audioFormat: AVAudioFormat
+    /// 退避時のリサンプル用。入力フォーマットが変わらない限り作り直さない。
+    private var cachedConverter: AVAudioConverter?
     private var didFinish = false
     private var resultTask: Task<Void, Never>?
 
@@ -228,8 +230,55 @@ actor AppleSpeechSession: TranscriptionSession {
 
     func append(_ chunk: AudioChunk) async throws {
         guard !didFinish, !chunk.samples.isEmpty else { return }
-        guard let buffer = Self.buffer(from: chunk, format: audioFormat) else { return }
+        guard let buffer = resample(chunk) else { return }
         inputContinuation.yield(AnalyzerInput(buffer: buffer))
+    }
+
+    /// チャンクをこのセッションのフォーマットへ揃える。
+    ///
+    /// **サンプルレートが違うチャンクが来ることがある。**
+    /// クラウド認識から退避するとき、保持していた音声をこちらへ流し直すが、
+    /// Realtime API は 24kHz 固定（16000 はサーバーが拒否する）で、
+    /// こちらは 16kHz を要求する。
+    ///
+    /// かつては `chunk.format` を Int16/Float の判定にしか使わず、
+    /// バッファをこのセッションのフォーマットで組み立てていた。
+    /// 24kHz のサンプル列を 16kHz として解釈するので、**無言で 1.5 倍速**になり、
+    /// エラーも出ないまま認識だけが壊れる。
+    private func resample(_ chunk: AudioChunk) -> AVAudioPCMBuffer? {
+        let matchesSession = chunk.format.sampleRate == audioFormat.sampleRate
+            && chunk.format.channelCount == Int(audioFormat.channelCount)
+        if matchesSession { return Self.buffer(from: chunk, format: audioFormat) }
+
+        guard let sourceFormat = AVAudioFormat(
+            commonFormat: chunk.format.isInt16 ? .pcmFormatInt16 : .pcmFormatFloat32,
+            sampleRate: chunk.format.sampleRate,
+            channels: AVAudioChannelCount(chunk.format.channelCount),
+            interleaved: chunk.format.isInt16),
+            let input = Self.buffer(from: chunk, format: sourceFormat)
+        else { return nil }
+
+        let converter = self.converter(from: sourceFormat)
+        let ratio = audioFormat.sampleRate / sourceFormat.sampleRate
+        let capacity = AVAudioFrameCount(Double(input.frameLength) * ratio) + 1_024
+        guard let converter,
+              let output = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: capacity)
+        else { return nil }
+
+        var error: NSError?
+        let box = SingleBufferSource(input)
+        converter.convert(to: output, error: &error) { _, status in box.next(status) }
+        guard error == nil, output.frameLength > 0 else { return nil }
+        return output
+    }
+
+    /// 変換器は使い回す。チャンクごとに作ると状態が毎回リセットされ、
+    /// リサンプルの継ぎ目にノイズが乗る。
+    private func converter(from source: AVAudioFormat) -> AVAudioConverter? {
+        if let cached = cachedConverter, cached.inputFormat == source { return cached }
+        let made = AVAudioConverter(from: source, to: audioFormat)
+        cachedConverter = made
+        return made
     }
 
     func finish() async throws {
@@ -295,5 +344,22 @@ public struct LocaleChoice: Hashable, Sendable {
     public init(identifier: String, displayName: String) {
         self.identifier = identifier
         self.displayName = displayName
+    }
+}
+
+/// `AVAudioConverter.convert` のブロックへ入力を 1 度だけ渡す箱。
+/// ブロックが `@Sendable` 扱いなのに `AVAudioPCMBuffer` は Sendable でないため、
+/// 1 回の同期変換でしか使わないことを明示して包む。
+final class SingleBufferSource: @unchecked Sendable {
+    private let buffer: AVAudioPCMBuffer
+    private var consumed = false
+
+    init(_ buffer: AVAudioPCMBuffer) { self.buffer = buffer }
+
+    func next(_ status: UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioPCMBuffer? {
+        if consumed { status.pointee = .endOfStream; return nil }
+        consumed = true
+        status.pointee = .haveData
+        return buffer
     }
 }

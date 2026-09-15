@@ -80,6 +80,36 @@ public final class AppModel {
     /// **黙って切り替えない。** 表示と実際の経路が食い違うのが一番よくない。
     public private(set) var degradedToLocal = false
 
+    /// 音声を外へ出すことに同意する。**ここでだけ `provider` を書き換える。**
+    /// 同意する前にエンジンを切り替えてしまうと、確認を経ずに音声が出る経路ができる。
+    public func grantAudioEgressConsent(host: String) {
+        update {
+            $0.privacy.audioEgress.consentedHost = host.lowercased()
+            $0.privacy.audioEgress.consentedAt = ISO8601DateFormatter().string(from: .now)
+            $0.privacy.audioEgress.noticeVersion = AudioEgressNotice.currentVersion
+            $0.transcription.provider = CloudTranscriptionProviderID.openAIRealtime
+        }
+    }
+
+    /// 同意を取り消してローカルに戻す。**同意の記録ごと消す。**
+    /// 残しておくと、次に有効化したときに確認が出ない。
+    public func revokeAudioEgressConsent() {
+        update {
+            $0.privacy.audioEgress = Settings.Privacy.AudioEgress()
+            $0.transcription.provider = CloudTranscriptionProviderID.appleSpeechAnalyzer
+        }
+    }
+
+    /// いまクラウドで録音するか。HUD とメニューバーの表示に使う。
+    public var usesCloudTranscription: Bool {
+        settings.cloudTranscriptionDestination != nil
+    }
+
+    /// 音声の送信先（表示用）。
+    public var audioDestination: CloudTranscriptionDestination? {
+        settings.cloudTranscriptionDestination
+    }
+
     func noteCloudDegraded() {
         degradedToLocal = true
         Log.speech.notice("クラウド認識から この Mac の認識へ退避した")
@@ -553,18 +583,26 @@ public final class AppModel {
 
     var menuBarSymbol: String {
         if !missingPermissions.isEmpty { return "exclamationmark.triangle" }
+        // **音声が外に出る状態は、録音中かどうかに関わらず常に示す。**
+        // 到達範囲が同じでもデータ種別が音声なら厳しい側へ振る。
+        // 「申告でアイコンを優しくしない」原則の裏返しで、緩める方向には使わない。
+        if usesCloudTranscription { return "antenna.radiowaves.left.and.right" }
         if phase.isListening { return "mic.fill" }
         return settings.privacy.allowNetwork ? "globe" : "mic"
     }
 
     var privacyHeadline: String {
         if !missingPermissions.isEmpty { return "権限が不足しています" }
+        // **音声を先に言う。** 3 系統のうち最も重いので、埋もれさせない。
+        if let audio = audioDestination {
+            return "音声 → \(audio.host)（この Mac の外へ出ます）"
+        }
         if !settings.privacy.allowNetwork { return "完全ローカル — 送信先なし" }
-        if !settings.refinement.enabled { return "完全ローカル — 送信先なし" }
+        if !settings.refinement.enabled { return "音声はこの Mac から出ません" }
         let host = URL(string: settings.refinement.openaiCompatible.baseURL)?.host ?? "?"
         let op = settings.refinement.openaiCompatible.operatorKind == "self-hosted"
             ? "自社運用と設定" : "外部サービス"
-        return "整形テキスト → \(host)（\(op)）"
+        return "音声は出ません / 整形テキスト → \(host)（\(op)）"
     }
 }
 

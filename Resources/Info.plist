@@ -29,7 +29,7 @@
 
 	<!-- これが無いと最初の AVAudioEngine.start() でプロセスが kill される（拒否ではなく kill）。 -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>音声入力のためにマイクを使用します。音声はこの Mac 上で処理され、保存されません。</string>
+	<string>音声入力のためにマイクを使用します。音声は既定ではこの Mac 上でのみ処理され、保存されません。クラウドの音声認識は、設定で明示的に有効にした場合のみ使用されます。</string>
 
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>ローカル LLM に接続して文章を校正するために使用します。設定で明示的に有効にした場合のみ通信します。</string>

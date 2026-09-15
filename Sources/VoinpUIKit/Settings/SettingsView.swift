@@ -147,9 +147,12 @@ struct GeneralSettings: View {
 struct RecognitionSettings: View {
     let model: AppModel
     @State private var termsText: String = ""
+    @State private var showingConsent = false
 
     var body: some View {
         Form {
+            engineSection
+
             Section("言語") {
                 Picker("認識する言語", selection: Binding(
                     get: { model.settings.transcription.locale },
@@ -200,6 +203,124 @@ struct RecognitionSettings: View {
         }
         .formStyle(.grouped)
         .onAppear { termsText = model.settings.transcription.termHints.joined(separator: "\n") }
+        .sheet(isPresented: $showingConsent) {
+            AudioEgressConsentSheet(
+                host: consentHost,
+                port: 443,
+                operatorKind: model.settings.transcription.realtime.operatorKind,
+                refinementHost: model.settings.refinement.enabled
+                    ? URL(string: model.settings.refinement.openaiCompatible.baseURL)?.host
+                    : nil,
+                onConsent: {
+                    model.grantAudioEgressConsent(host: consentHost)
+                    showingConsent = false
+                },
+                onCancel: { showingConsent = false })
+        }
+    }
+
+    /// 認識エンジンの選択。**言語の上に置く。**
+    /// どのエンジンで録音しているかが一番上にないと、見落としたまま使うことになる。
+    private var engineSection: some View {
+        Section("認識エンジン") {
+            Picker("音声をどこで認識するか", selection: Binding(
+                get: { model.usesCloudTranscription ? "cloud" : "local" },
+                set: { choice in
+                    if choice == "cloud" {
+                        // **同意を取るまで設定を書き換えない。**
+                        showingConsent = true
+                    } else {
+                        model.revokeAudioEgressConsent()
+                    }
+                })) {
+                Text("この Mac で認識（外に出ません）").tag("local")
+                Text("クラウドで認識").tag("cloud")
+                    .disabled(!model.dependencies.supportsCloudTranscription)
+            }
+            .pickerStyle(.radioGroup)
+            .disabled(cloudRequirementsMissing && !model.usesCloudTranscription)
+
+            if !model.dependencies.supportsCloudTranscription {
+                Label("このビルドはネットワーク機能を含みません（オフライン版）",
+                      systemImage: "lock.fill")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            } else if model.usesCloudTranscription, let d = model.audioDestination {
+                Label("音声は \(d.host) へ送信されます", systemImage: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 11)).foregroundStyle(.orange)
+            } else {
+                Label("音声はこの Mac から出ません", systemImage: "lock.fill")
+                    .font(.system(size: 11)).foregroundStyle(.green)
+            }
+
+            cloudEndpointFields
+        }
+    }
+
+    /// クラウドを選ぶのに足りていない条件。
+    /// **「選べない」だけにせず、何が足りないかを出す。**
+    private var cloudRequirementsMissing: Bool {
+        !model.settings.privacy.allowNetwork
+            || model.settings.transcription.realtime.endpointURL.isEmpty
+            || model.settings.transcription.realtime.model.isEmpty
+    }
+
+    private var consentHost: String {
+        URL(string: model.settings.transcription.realtime.endpointURL)?.host ?? ""
+    }
+
+    @ViewBuilder
+    private var cloudEndpointFields: some View {
+        if model.dependencies.supportsCloudTranscription {
+            DisclosureGroup("クラウドの接続先") {
+                VStack(alignment: .leading, spacing: 8) {
+                    labeledField("エンドポイント URL",
+                                 placeholder: "wss://<リソース>.openai.azure.com/openai/v1/realtime?intent=transcription",
+                                 text: Binding(
+                                    get: { model.settings.transcription.realtime.endpointURL },
+                                    set: { v in model.update {
+                                        $0.transcription.realtime.endpointURL = v } }))
+                    labeledField("モデル（Azure ではデプロイ名）", placeholder: "gpt-live-transcribe",
+                                 text: Binding(
+                                    get: { model.settings.transcription.realtime.model },
+                                    set: { v in model.update {
+                                        $0.transcription.realtime.model = v } }))
+
+                    Picker("認証ヘッダ", selection: Binding(
+                        get: { model.settings.transcription.realtime.authScheme },
+                        set: { v in model.update {
+                            $0.transcription.realtime.authScheme = v
+                            $0.transcription.realtime.authHeader =
+                                v == "raw" ? "api-key" : "Authorization"
+                        } })) {
+                        Text("Authorization: Bearer（OpenAI）").tag("bearer")
+                        Text("api-key（Azure OpenAI）").tag("raw")
+                    }
+
+                    if !model.settings.privacy.allowNetwork {
+                        Label("先に セキュリティ でネットワークを有効にしてください",
+                              systemImage: "exclamationmark.triangle")
+                            .font(.system(size: 11)).foregroundStyle(.orange)
+                    }
+                    Text("URL は貼ったものをそのまま使います。正規化しません。")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                .padding(.top, 4)
+            }
+        }
+    }
+
+    /// `Form` の中では `TextField` がラベル付き行として扱われ、入力欄が右に寄る。
+    /// `labelsHidden()` で左詰めにする（校正の設定で 3 度直した箇所と同じ）。
+    private func labeledField(_ title: String, placeholder: String,
+                              text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
+            TextField(placeholder, text: text)
+                .textFieldStyle(.roundedBorder)
+                .labelsHidden()
+                .font(.system(size: 12, design: .monospaced))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
@@ -255,7 +376,12 @@ struct PrivacySettings: View {
             }
 
             Section("何がどこへ送られるか") {
-                row("音声", "送信しません（この Mac 上でのみ処理）")
+                // **ここが最初に嘘になる行だった。** 送信先は設定から導出する。
+                if let d = model.audioDestination {
+                    row("音声", "\(d.host):\(d.port) へ送信")
+                } else {
+                    row("音声", "送信しません（この Mac 上でのみ処理）")
+                }
                 row("書き起こし", model.settings.refinement.enabled ? "校正のため LLM へ" : "送信しません")
                 row("整形後テキスト", "挿入先のアプリのみ")
             }

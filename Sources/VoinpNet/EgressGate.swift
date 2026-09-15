@@ -70,7 +70,38 @@ public actor EgressGate {
                                   delegateQueue: nil)
     }
 
+    /// 判定 1〜6 を通った証拠。
+    ///
+    /// **`authorize` の中でしか作れない**（イニシャライザが private）。
+    /// 実 I/O を行うメソッドはこれを要求するので、判定を飛ばした送信経路は
+    /// 書こうとしてもコンパイルできない。
+    /// 「同じ 6 手順を気をつけて書き写す」ではなく、書けなくするのが狙い。
+    struct Authorization: Sendable {
+        let host: String
+        /// max(宛先クラス, プロキシクラス)。監査にもこちらを残す。
+        let effectiveClass: EgressClass
+
+        private init(host: String, effectiveClass: EgressClass) {
+            self.host = host
+            self.effectiveClass = effectiveClass
+        }
+
+        fileprivate static func granted(host: String,
+                                        effectiveClass: EgressClass) -> Authorization {
+            Authorization(host: host, effectiveClass: effectiveClass)
+        }
+    }
+
     public func send(_ request: EgressRequest) async throws -> EgressResponse {
+        let auth = try await authorize(request)
+        return try await perform(request, host: auth.host, reach: auth.effectiveClass)
+    }
+
+    /// **送信前の判定はここ 1 箇所だけ。**
+    ///
+    /// `send` も、これから足す WebSocket 経路も、必ずここを通る。
+    /// 経路ごとに手順を書き写すと、片方だけ緩い実装が入り込む。
+    private func authorize(_ request: EgressRequest) async throws -> Authorization {
         let snapshot = await policy()
         let host = request.url.host ?? ""
 
@@ -147,7 +178,7 @@ public actor EgressGate {
             throw VoinpError.egressDenied(.insecureSchemeForClass(effective))
         }
 
-        return try await perform(request, host: host, reach: effective)
+        return .granted(host: host, effectiveClass: effective)
     }
 
     /// TLS の無いスキームか。

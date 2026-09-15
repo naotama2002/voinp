@@ -4,3 +4,5 @@ build/
 *.xcodeproj
 .DS_Store
 CodeSigning.local.mk
+
+.env.keys

@@ -321,7 +321,7 @@ public actor EgressGate {
     ///
     /// host / port / path / query はそのまま保つ。写像できなければ `nil` を返し、
     /// 呼び出し側は「判定不能」として拒否する（直結とみなさない）。
-    static func proxyProbeURL(for url: URL) -> URL? {
+    public static func proxyProbeURL(for url: URL) -> URL? {
         let scheme = url.scheme?.lowercased()
         let mapped: String? = switch scheme {
         case "ws": "http"

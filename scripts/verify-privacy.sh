@@ -14,9 +14,17 @@ echo "== 2. URLSession は VoinpNet の中だけ =="
 # **WebSocket を見落とさないこと。** session.webSocketTask(with:) は
 # URLSession\( に一致しないため、かつてはここを素通りした。
 # 音声をストリーミングする実装を VoinpProviders に書かれても気づけない状態だった。
-hits=$(grep -rln --include='*.swift' -E \
+# **行全体がコメントなら除外する。** 検査したいのはコードであって散文ではない。
+# API 名を説明のために書いた行（「URLSessionWebSocketTask.receive() は
+# Task キャンセルを見ない」等）で誤検知していた。
+# 行頭が // や * の行だけを落とす。文字列中の // は触らないので、
+# URL を含む行を壊す心配がない。
+hits=$(grep -rn --include='*.swift' -E \
        'URLSession\(|NWConnection\(|CFSocket|getaddrinfo|webSocketTask|URLSessionWebSocketTask|NWProtocolWebSocket' \
-       Sources/ | grep -v '^Sources/VoinpNet/' || true)
+       Sources/ \
+       | grep -v '^Sources/VoinpNet/' \
+       | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(///?|\*)' \
+       | cut -d: -f1 | sort -u || true)
 if [ -z "$hits" ]; then ok "VoinpNet 以外にネットワーク API なし"
 else bad "VoinpNet 以外にネットワーク API がある:"; echo "$hits" | sed 's/^/       /'; fi
 

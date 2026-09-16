@@ -55,10 +55,19 @@ public struct FallbackTranscriptionProvider: TranscriptionProvider {
         try await secondary.downloadModel(for: locale, progress: progress)
     }
 
-    /// 一次のフォーマットで取り込む。
-    /// 退避時はそのまま二次へ流すので、**二次側がサンプルレートの違いを吸収する**。
+    /// 取り込みのフォーマット。
+    ///
+    /// **一次が使えないときは二次に合わせる。** 無条件に一次を返していたため、
+    /// クラウドが未設定なのに 24kHz で取り込み、16kHz の Apple エンジンへ流していた。
+    /// 実機で「音量は出ているのに 0 文字」という形で踏んだ。
+    ///
+    /// 一次が使えるときは一次に合わせる。途中で退避したら、そのときは
+    /// 二次側がサンプルレートの違いを吸収する（`AudioResampler`）。
     public func preferredFormat(for request: TranscriptionRequest) async -> AudioFormatDescription {
-        await primary.preferredFormat(for: request)
+        guard case .ready = await primary.readiness(for: request) else {
+            return await secondary.preferredFormat(for: request)
+        }
+        return await primary.preferredFormat(for: request)
     }
 
     public func startSession(_ request: TranscriptionRequest) async throws

@@ -150,6 +150,9 @@ struct RecognitionSettings: View {
     @State private var showingConsent = false
     @State private var apiKeyInput = ""
     @State private var resolvedReach: EgressClass?
+    /// Keychain の状態は `@Observable` の追跡対象外なので、
+    /// 保存・削除したときに自分で引き直す。
+    @State private var keyStateToken = 0
 
     var body: some View {
         Form {
@@ -292,23 +295,7 @@ struct RecognitionSettings: View {
                                     set: { v in model.update {
                                         $0.transcription.realtime.model = v } }))
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("API キー").font(.system(size: 11)).foregroundStyle(.secondary)
-                        HStack {
-                            SecureField("入力すると Keychain に保存されます", text: $apiKeyInput)
-                                .textFieldStyle(.roundedBorder)
-                                .labelsHidden()
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Button("保存") {
-                                model.storeTranscriptionAPIKey(
-                                    apiKeyInput,
-                                    forEndpoint: model.settings.transcription.realtime.endpointURL)
-                                apiKeyInput = ""   // 画面に残さない
-                            }
-                            .disabled(apiKeyInput.isEmpty
-                                      || model.settings.transcription.realtime.endpointURL.isEmpty)
-                        }
-                    }
+                    apiKeyField
 
                     Picker("認証ヘッダ", selection: Binding(
                         get: { model.settings.transcription.realtime.authScheme },
@@ -331,6 +318,65 @@ struct RecognitionSettings: View {
                 }
                 .padding(.top, 4)
             }
+        }
+    }
+
+    /// API キーの入力と状態。
+    ///
+    /// **入力欄にマスクを入れない。** `••••••` を `text` に流し込むと、
+    /// そのまま保存ボタンを押したときに**その文字列が鍵として保存される**。
+    /// 入力欄は常に空（＝新しい鍵を入れる場所）にして、
+    /// 保存されているかどうかは別の行で示す。
+    ///
+    /// 口座はホスト単位なので、状態表示も接続先に追随させる。
+    /// 接続先を変えたら「未設定」に戻るのが正しい。
+    @ViewBuilder
+    private var apiKeyField: some View {
+        let endpoint = model.settings.transcription.realtime.endpointURL
+        let stored = model.hasTranscriptionAPIKey(forEndpoint: endpoint)
+
+        VStack(alignment: .leading, spacing: 4) {
+            Text("API キー").font(.system(size: 11)).foregroundStyle(.secondary)
+
+            HStack {
+                SecureField(stored ? "変更する場合だけ新しいキーを入力"
+                                   : "キーを入力すると Keychain に保存されます",
+                            text: $apiKeyInput)
+                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button(stored ? "更新" : "保存") {
+                    model.storeTranscriptionAPIKey(apiKeyInput, forEndpoint: endpoint)
+                    apiKeyInput = ""   // 画面に残さない
+                    keyStateToken &+= 1
+                }
+                // 空のまま押せてしまうと、空文字を保存して鍵を壊す。
+                .disabled(apiKeyInput.isEmpty || endpoint.isEmpty)
+            }
+
+            HStack(spacing: 8) {
+                if endpoint.isEmpty {
+                    Label("先に接続先の URL を入れてください", systemImage: "info.circle")
+                        .foregroundStyle(.secondary)
+                } else if stored {
+                    // 値は出さない。**保存されている事実だけ**を示す。
+                    Label("この接続先のキーは保存済み（••••••••）",
+                          systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                    Button("削除") {
+                        model.removeTranscriptionAPIKey(forEndpoint: endpoint)
+                        keyStateToken &+= 1
+                    }
+                    .buttonStyle(.link)
+                } else {
+                    Label("この接続先のキーは未設定", systemImage: "exclamationmark.circle")
+                        .foregroundStyle(.orange)
+                }
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 11))
+            // 保存・削除・接続先の変更で引き直す。
+            .id("\(keyStateToken)-\(endpoint)")
         }
     }
 

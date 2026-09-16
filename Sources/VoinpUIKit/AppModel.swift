@@ -534,6 +534,26 @@ public final class AppModel {
         }
     }
 
+    /// この接続先の API キーが保存されているか。**値は読まない。**
+    ///
+    /// 口座はホスト単位なので、接続先を変えると別の口座になる。
+    /// 「保存済み」の表示も接続先に追随させないと、
+    /// 前のホストの鍵があるのに新しいホストでは未設定、という状態を見落とす。
+    public func hasTranscriptionAPIKey(forEndpoint endpoint: String) -> Bool {
+        guard let store = dependencies.credentials as? KeychainStore,
+              let host = URL(string: endpoint)?.host,
+              let ref = CredentialRef.openAIRealtime(host: host) else { return false }
+        return store.exists(ref)
+    }
+
+    /// 保存済みの API キーを消す。
+    public func removeTranscriptionAPIKey(forEndpoint endpoint: String) {
+        guard let store = dependencies.credentials,
+              let host = URL(string: endpoint)?.host,
+              let ref = CredentialRef.openAIRealtime(host: host) else { return }
+        try? store.delete(ref)
+    }
+
     /// ネットワークのマスタースイッチ。
     ///
     /// **切ると音声も書き起こしも即座に止まる。** `cloudTranscriptionDestination` の

@@ -8,6 +8,22 @@ import VoinpCore
 ///   Keychain Access.app で一覧が読める）
 /// - `ThisDeviceOnly` にして iCloud Keychain に同期させない。
 ///   「この Mac から出ない」を謳うアプリが資格情報を同期させるのは自己矛盾。
+///
+/// ## `kSecUseDataProtectionKeychain` を使わない
+///
+/// 指定すると **`errSecMissingEntitlement (-34018)` で保存に失敗する**。
+/// データ保護キーチェーンは、サンドボックス外のアプリでは
+/// `keychain-access-groups` の entitlement を要求し、それには
+/// provisioning profile が要る。このアプリはサンドボックスを使えず
+/// （AX と CGEvent が拒否されるため。docs/07 参照）、
+/// 各自が自分の証明書で署名する配布方式なので profile を前提にできない。
+///
+/// ファイルベースの従来のキーチェーンを使う。`ThisDeviceOnly` と
+/// `kSecAttrSynchronizable = false` は変わらず効くので、
+/// iCloud へ同期しない性質は保たれる。
+///
+/// **実機で踏んだ**: 設定画面から API キーを保存しようとして
+/// 「API キーを保存できません (-34018)」がログに出ていた。
 public struct KeychainStore: CredentialStore {
 
     public init() {}
@@ -17,7 +33,6 @@ public struct KeychainStore: CredentialStore {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: CredentialRef.service,
             kSecAttrAccount as String: ref.account,
-            kSecUseDataProtectionKeychain as String: true,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
@@ -32,7 +47,6 @@ public struct KeychainStore: CredentialStore {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: CredentialRef.service,
             kSecAttrAccount as String: ref.account,
-            kSecUseDataProtectionKeychain as String: true,
         ]
         SecItemDelete(base as CFDictionary)
 
@@ -52,7 +66,6 @@ public struct KeychainStore: CredentialStore {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: CredentialRef.service,
             kSecAttrAccount as String: ref.account,
-            kSecUseDataProtectionKeychain as String: true,
         ]
         SecItemDelete(query as CFDictionary)
     }

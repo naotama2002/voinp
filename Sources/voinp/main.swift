@@ -46,8 +46,38 @@ let discover: @Sendable (String) async -> ModelDiscoveryResult = { input in
     }
 }
 
+// クラウド音声認識。**設定から毎回組み立てる。**
+// 実体を抱えると接続先やモデルを変えても古いまま使い続ける。
+// オフライン版はこの closure を渡さないので、クラウドは存在しない。
+let makeCloudSTT: @Sendable (Settings) -> (any TranscriptionProvider)? = { settings in
+    // 旗印の唯一の分岐点。5 条件が揃っていなければ nil。
+    guard settings.cloudTranscriptionDestination != nil else { return nil }
+    let c = settings.transcription.realtime
+    guard let url = URL(string: c.endpointURL), let host = url.host else { return nil }
+
+    let injection: SecretInjection? = c.requiresAPIKey
+        ? CredentialRef.openAIRealtime(host: host).map {
+            c.authScheme == "raw" ? .raw($0) : .bearer($0)
+        }
+        : nil
+
+    return RealtimeTranscriptionProvider(
+        config: RealtimeSessionConfig(
+            model: c.model, languages: c.languages, keywords: [],
+            prompt: "", delay: c.delay, noiseReduction: c.noiseReduction),
+        endpoint: url, authHeader: c.authHeader, injection: injection,
+        handshakeTimeout: .milliseconds(c.handshakeTimeoutMs), gate: gate)
+}
+
+// 到達範囲は**解決後のアドレス**で判定する。ホスト名では判断しない。
+let resolveReach: @Sendable (String) async -> EgressClass? = { host in
+    try? await HostClassifier().classify(host: host)
+}
+
 VoinpRoot.run(Dependencies(makeLLMClient: makeClient,
                            settings: loaded.settings,
                            configError: loaded.error,
                            credentials: credentials,
-                           discoverModels: discover))
+                           discoverModels: discover,
+                           makeCloudSpeechProvider: makeCloudSTT,
+                           resolveReach: resolveReach))

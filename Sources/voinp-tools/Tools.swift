@@ -22,6 +22,12 @@ struct Tools {
             return
         }
 
+        // gpt-live-transcribe の実機確認モード
+        if CommandLine.arguments.contains("--probe-transcribe") {
+            await RealtimeProbe.run(RealtimeProbe.Options.parse(CommandLine.arguments))
+            return
+        }
+
         // LLM の疎通確認モード
         if CommandLine.arguments.contains("--probe-llm") {
             let args = CommandLine.arguments

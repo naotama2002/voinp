@@ -51,7 +51,7 @@ public struct OpenAICompatibleClient: LLMClient, Sendable {
         let response = try await gate.send(EgressRequest(
             purpose: .refine, providerID: identifier, url: url, method: "POST",
             headers: ["Content-Type": "application/json", "Accept": "application/json"],
-            secretRefs: credential.map { ["Authorization": $0] } ?? [:],
+            secretRefs: credential.map { ["Authorization": .bearer($0)] } ?? [:],
             body: body, timeout: request.timeout,
             // **書き起こしを含む。** 監査とポリシー判定でこれが効く。
             carriesUserContent: true))

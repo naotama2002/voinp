@@ -168,6 +168,8 @@ actor AppleSpeechSession: TranscriptionSession {
     private let analyzer: SpeechAnalyzer
     private let inputContinuation: AsyncStream<AnalyzerInput>.Continuation
     private let audioFormat: AVAudioFormat
+    /// 退避時のリサンプル用。**変換器は使い回す**（作り直すと継ぎ目にノイズが乗る）。
+    private let resampler: AudioResampler
     private var didFinish = false
     private var resultTask: Task<Void, Never>?
 
@@ -187,6 +189,7 @@ actor AppleSpeechSession: TranscriptionSession {
             ?? AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16000,
                              channels: 1, interleaved: true)!
         self.audioFormat = fmt
+        self.resampler = AudioResampler(target: fmt)
 
         let inputParts = AsyncStream<AnalyzerInput>.makeStream(bufferingPolicy: .bufferingNewest(256))
         self.inputContinuation = inputParts.continuation
@@ -228,9 +231,15 @@ actor AppleSpeechSession: TranscriptionSession {
 
     func append(_ chunk: AudioChunk) async throws {
         guard !didFinish, !chunk.samples.isEmpty else { return }
-        guard let buffer = Self.buffer(from: chunk, format: audioFormat) else { return }
+        // **落としたら黙らない。** 無言で捨てると「音量は出ているのに 0 文字」に
+        // なり、原因を掴むのに実機のログが要る（実際にそうなった）。
+        guard let buffer = resampler.buffer(for: chunk) else {
+            Log.audio.error("音声を変換できず破棄: \(chunk.format.sampleRate, privacy: .public)Hz → \(self.audioFormat.sampleRate, privacy: .public)Hz")
+            return
+        }
         inputContinuation.yield(AnalyzerInput(buffer: buffer))
     }
+
 
     func finish() async throws {
         guard !didFinish else { return }
@@ -268,24 +277,6 @@ actor AppleSpeechSession: TranscriptionSession {
         return Duration.seconds(start)...Duration.seconds(end)
     }
 
-    private static func buffer(from chunk: AudioChunk, format: AVAudioFormat) -> AVAudioPCMBuffer? {
-        let bytesPerFrame = chunk.format.isInt16 ? MemoryLayout<Int16>.size : MemoryLayout<Float>.size
-        let frames = chunk.samples.count / bytesPerFrame
-        guard frames > 0,
-              let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames))
-        else { return nil }
-        buf.frameLength = AVAudioFrameCount(frames)
-
-        chunk.samples.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress else { return }
-            if let dst = buf.int16ChannelData {
-                dst[0].update(from: base.assumingMemoryBound(to: Int16.self), count: frames)
-            } else if let dst = buf.floatChannelData {
-                dst[0].update(from: base.assumingMemoryBound(to: Float.self), count: frames)
-            }
-        }
-        return buf
-    }
 }
 
 /// 設定 UI 用の言語候補。

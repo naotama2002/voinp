@@ -14,9 +14,17 @@ echo "== 2. URLSession は VoinpNet の中だけ =="
 # **WebSocket を見落とさないこと。** session.webSocketTask(with:) は
 # URLSession\( に一致しないため、かつてはここを素通りした。
 # 音声をストリーミングする実装を VoinpProviders に書かれても気づけない状態だった。
-hits=$(grep -rln --include='*.swift' -E \
+# **行全体がコメントなら除外する。** 検査したいのはコードであって散文ではない。
+# API 名を説明のために書いた行（「URLSessionWebSocketTask.receive() は
+# Task キャンセルを見ない」等）で誤検知していた。
+# 行頭が // や * の行だけを落とす。文字列中の // は触らないので、
+# URL を含む行を壊す心配がない。
+hits=$(grep -rn --include='*.swift' -E \
        'URLSession\(|NWConnection\(|CFSocket|getaddrinfo|webSocketTask|URLSessionWebSocketTask|NWProtocolWebSocket' \
-       Sources/ | grep -v '^Sources/VoinpNet/' || true)
+       Sources/ \
+       | grep -v '^Sources/VoinpNet/' \
+       | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(///?|\*)' \
+       | cut -d: -f1 | sort -u || true)
 if [ -z "$hits" ]; then ok "VoinpNet 以外にネットワーク API なし"
 else bad "VoinpNet 以外にネットワーク API がある:"; echo "$hits" | sed 's/^/       /'; fi
 
@@ -61,7 +69,33 @@ leaks="$leaks$(grep -rnE --include='*\.swift' \
 if [ -z "$(echo "$leaks" | tr -d '[:space:]')" ]; then ok "本文の .public 補間なし"
 else bad "ログに本文が漏れる可能性:"; echo "$leaks" | sed 's/^/       /'; fi
 
-echo "== 6. 想定外の文字体系の混入がないこと =="
+echo "== 6. 旗印: 既定で音声が出ないこと（ゴールデンテスト） =="
+# 「デフォルト起動状態では音声を外部に送信しない」を CI の失敗として固定する。
+# 5 条件の全組合せ 32 通りを回し、全部揃ったときだけ送信先が現れることを見る。
+if swift test --filter 'AudioEgressGoldenTests' >/dev/null 2>&1; then
+  ok "既定設定から .transcribe は導出されない"
+else bad "ゴールデンテストが落ちた。旗印が破れている"; fi
+
+echo "== 7. .transcribe を許可に足す箇所が 1 つだけであること =="
+# cloudTranscriptionDestination が唯一の分岐点であること。
+# 許可集合を**組み立てる**箇所だけを見る（読むだけの contains は対象外）。
+# voinp-tools は開発用の道具で、アプリの経路ではないので除く。
+lit=$(grep -rnE --include='*.swift' 'allowedPurposes:|purposes\.insert' \
+      Sources/VoinpCore Sources/VoinpEngine Sources/VoinpUIKit Sources/VoinpNet Sources/VoinpProviders \
+      | grep -v '^Sources/VoinpNet/EgressPolicy.swift' || true)
+if [ -z "$lit" ]; then ok "許可集合の組み立ては derive の 1 箇所だけ"
+else bad "許可集合を組み立てる箇所が増えている:"; echo "$lit" | sed 's/^/       /'; fi
+
+echo "== 8. 音声の送信先を作る箇所が 1 つだけであること =="
+# DataKind .audio の送信先を作れるのは cloudTranscriptionDestination だけ。
+aud=$(grep -rnE --include='*.swift' 'cloudTranscriptionDestination' \
+      Sources/VoinpCore Sources/VoinpEngine Sources/VoinpUIKit Sources/VoinpNet Sources/VoinpProviders \
+      | grep -v '^Sources/VoinpCore/Config/CloudTranscription.swift' \
+      | grep -vE '^Sources/VoinpNet/EgressPolicy.swift' || true)
+if [ -z "$aud" ]; then ok "分岐点は CloudTranscription.swift と derive のみ"
+else echo "       参照箇所（読むだけなら問題なし）:"; echo "$aud" | sed 's/^/       /'; ok "確認した"; fi
+
+echo "== 9. 想定外の文字体系の混入がないこと =="
 # 日本語ドキュメントにキリル / ハングル / タイ文字が紛れ込む事故を検出する。
 # （生成時のタイプミスで実際に 3 回発生した）
 strays=$(python3 - <<'PYEOF'

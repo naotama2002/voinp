@@ -141,13 +141,34 @@ public actor EgressGate {
 
         // 6. スキーム。公開ホストへの平文は常に拒否する。
         //    プロキシ経由なら平文はプロキシまで丸見えなので、実効クラスで判定する。
-        if request.url.scheme == "http", effective > .privateNetwork {
+        if Self.isPlaintext(request.url.scheme), effective > .privateNetwork {
             await audit.record(.denied(host: host, purpose: request.purpose,
                                        reason: .insecureSchemeForClass(effective)))
             throw VoinpError.egressDenied(.insecureSchemeForClass(effective))
         }
 
         return try await perform(request, host: host, reach: effective)
+    }
+
+    /// TLS の無いスキームか。
+    ///
+    /// **等値比較で書かないこと。** `Foundation` は URL のスキームを小文字化しない:
+    ///
+    ///     URL(string: "HTTP://example.com")?.scheme   // => "HTTP"
+    ///
+    /// かつては `request.url.scheme == "http"` と書いていたため、設定に大文字で
+    /// `HTTP://` と入れるとこの判定をすり抜けた。`EndpointProbe.normalize` は
+    /// `://` を含む入力をそのまま通すので、実際に到達する経路がある。
+    /// `URLSession` は `HTTP://` を問題なく http として扱うので、
+    /// **公開ホストへ書き起こしテキストが平文で出ていた。**
+    ///
+    /// `ws` を含めているのは、WebSocket の平文経路が http と同じ危険度だから。
+    /// ここに足し忘れると、音声がプロキシに丸見えのまま流れる。
+    static func isPlaintext(_ scheme: String?) -> Bool {
+        switch scheme?.lowercased() {
+        case "http", "ws": true
+        default: false
+        }
     }
 
     private func perform(_ request: EgressRequest, host: String, reach: EgressClass) async throws -> EgressResponse {

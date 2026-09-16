@@ -82,13 +82,28 @@ public final class AppModel {
 
     /// 音声を外へ出すことに同意する。**ここでだけ `provider` を書き換える。**
     /// 同意する前にエンジンを切り替えてしまうと、確認を経ずに音声が出る経路ができる。
-    public func grantAudioEgressConsent(host: String) {
+    /// - Parameter reach: 送信先の到達範囲。上限がこれに満たなければ**一緒に引き上げる**。
+    ///   同意ダイアログでそのことを明示したうえで呼ぶこと。
+    ///   別画面の知らないスイッチで黙って止めるのは保護ではなく罠になる。
+    public func grantAudioEgressConsent(host: String, reach: EgressClass?) {
         update {
             $0.privacy.audioEgress.consentedHost = host.lowercased()
             $0.privacy.audioEgress.consentedAt = ISO8601DateFormatter().string(from: .now)
             $0.privacy.audioEgress.noticeVersion = AudioEgressNotice.currentVersion
             $0.transcription.provider = CloudTranscriptionProviderID.openAIRealtime
+
+            // **必要な分だけ上げる。** 常に publicInternet まで開けたりしない。
+            if let reach, reach > (EgressClass(name: self.maxEgressClassName) ?? .loopback) {
+                let ladder: [EgressClass] = [.loopback, .privateNetwork, .publicInternet]
+                $0.privacy.allowedEgressClasses =
+                    ladder.filter { $0 <= reach }.map(\.name)
+            }
         }
+    }
+
+    /// 送信先の到達範囲を解決する。オフライン版では nil。
+    public func resolveReach(of host: String) async -> EgressClass? {
+        await dependencies.resolveReach?(host) ?? nil
     }
 
     /// 同意を取り消してローカルに戻す。**同意の記録ごと消す。**

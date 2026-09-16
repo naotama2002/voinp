@@ -51,4 +51,32 @@ public enum EgressClass: Int, Comparable, Codable, Sendable, CaseIterable {
     case publicInternet = 2
 
     public static func < (a: EgressClass, b: EgressClass) -> Bool { a.rawValue < b.rawValue }
+
+    /// 設定ファイルに書く名前。**UI からも使うので `VoinpCore` に置く。**
+    /// `VoinpUIKit` は `VoinpNet` を import できない（オフライン版が壊れる）。
+    public init?(name: String) {
+        switch name {
+        case "loopback": self = .loopback
+        case "privateNetwork": self = .privateNetwork
+        case "publicInternet": self = .publicInternet
+        default: return nil
+        }
+    }
+
+    public var name: String {
+        switch self {
+        case .loopback: "loopback"
+        case .privateNetwork: "privateNetwork"
+        case .publicInternet: "publicInternet"
+        }
+    }
+
+    /// 画面に出す言い方。
+    public var displayName: String {
+        switch self {
+        case .loopback: "この Mac の中だけ"
+        case .privateNetwork: "社内 LAN まで"
+        case .publicInternet: "インターネット経由"
+        }
+    }
 }

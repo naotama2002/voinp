@@ -69,9 +69,15 @@ let makeCloudSTT: @Sendable (Settings) -> (any TranscriptionProvider)? = { setti
         handshakeTimeout: .milliseconds(c.handshakeTimeoutMs), gate: gate)
 }
 
+// 到達範囲は**解決後のアドレス**で判定する。ホスト名では判断しない。
+let resolveReach: @Sendable (String) async -> EgressClass? = { host in
+    try? await HostClassifier().classify(host: host)
+}
+
 VoinpRoot.run(Dependencies(makeLLMClient: makeClient,
                            settings: loaded.settings,
                            configError: loaded.error,
                            credentials: credentials,
                            discoverModels: discover,
-                           makeCloudSpeechProvider: makeCloudSTT))
+                           makeCloudSpeechProvider: makeCloudSTT,
+                           resolveReach: resolveReach))

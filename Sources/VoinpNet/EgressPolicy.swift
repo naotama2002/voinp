@@ -99,17 +99,6 @@ public struct ProbeCandidate: Equatable, Sendable {
     public func isValid(at now: ContinuousClock.Instant) -> Bool { now < expiresAt }
 }
 
-extension EgressClass {
-    init?(name: String) {
-        switch name {
-        case "loopback": self = .loopback
-        case "privateNetwork": self = .privateNetwork
-        case "publicInternet": self = .publicInternet
-        default: return nil
-        }
-    }
-}
-
 // MARK: - PrivacyPosture の導出
 
 extension PrivacyPosture {

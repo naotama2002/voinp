@@ -14,8 +14,22 @@ struct AudioEgressConsentSheet: View {
     let port: Int
     let operatorKind: String
     let refinementHost: String?
+    /// 送信先の実際の到達範囲。**ホスト名から推測せず解決した値**。
+    let reach: EgressClass?
+    /// いまの上限。
+    let currentCeiling: EgressClass
     let onConsent: () -> Void
     let onCancel: () -> Void
+
+    /// 送信先が現在の上限を超えているか。
+    ///
+    /// **超えるときだけ、同意に「上限を広げること」を含める。**
+    /// 別画面の知らないスイッチで黙って止めるのは保護ではなく罠になる
+    /// （実際に「同意したのに動かない」を踏んだ）。
+    private var wouldRaiseCeiling: Bool {
+        guard let reach else { return false }
+        return reach > currentCeiling
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -25,6 +39,7 @@ struct AudioEgressConsentSheet: View {
                 VStack(alignment: .leading, spacing: 18) {
                     destination
                     whatIsSent
+                    if wouldRaiseCeiling { ceilingChange }
                     whatChanges
                     caveat
                 }
@@ -57,7 +72,7 @@ struct AudioEgressConsentSheet: View {
             Text("送信先").font(.system(size: 12, weight: .semibold))
             VStack(alignment: .leading, spacing: 4) {
                 row("ホスト", "\(host):\(port)")
-                row("到達範囲", "この Mac の外")
+                row("到達範囲", reach?.displayName ?? "判定できませんでした")
                 // **申告であることを隠さない。** アプリは検証していない。
                 row("運用主体", operatorKind == "self-hosted"
                     ? "自社運用（あなたがそう設定しました。Voinp は検証していません）"
@@ -92,6 +107,30 @@ struct AudioEgressConsentSheet: View {
             "録音中の表示に「クラウド」と送信先が出ます",
             "この確認の記録が config.json の privacy.audioEgress に残ります",
         ], symbol: "info.circle", tint: .secondary)
+    }
+
+    /// 上限も一緒に広がることを明示する。
+    /// **何が変わるかを言わずに広げてはいけない。**
+    @ViewBuilder
+    private var ceilingChange: some View {
+        if let reach {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("送信の上限も広がります", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.orange)
+                Text("この送信先は「\(reach.displayName)」です。"
+                     + "いまの上限は「\(currentCeiling.displayName)」なので、"
+                     + "同意すると上限が「\(reach.displayName)」まで広がります。")
+                Text("上限はすべての通信に効くので、LLM 校正の送信先にも同じ範囲が適用されます。"
+                     + "あとから 設定 › プライバシー で狭められます。")
+                    .foregroundStyle(.secondary)
+            }
+            .font(.system(size: 12))
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+        }
     }
 
     private var caveat: some View {

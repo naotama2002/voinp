@@ -102,3 +102,54 @@ struct EgressClassLadderTests {
                 "上限は別のスイッチ。同意では広がらない")
     }
 }
+
+/// 同意したときに到達範囲の上限がどう変わるか。
+///
+/// **「同意したのに動かない」を潰すための仕組み。**
+/// 別画面の知らないスイッチで黙って止めるのは保護ではなく罠になる。
+/// ただし**必要な分だけ**上げる。同意を口実に全部開けたりしない。
+@Suite("同意と到達範囲の連動")
+struct ConsentRaisesCeilingTests {
+
+    /// `AppModel.grantAudioEgressConsent` が行う計算と同じもの。
+    /// UI を起動せずに規則だけを検査する。
+    private func raised(current: EgressClass, needed: EgressClass?) -> [String] {
+        let ladder: [EgressClass] = [.loopback, .privateNetwork, .publicInternet]
+        guard let needed, needed > current else {
+            return ladder.filter { $0 <= current }.map(\.name)
+        }
+        return ladder.filter { $0 <= needed }.map(\.name)
+    }
+
+    @Test("インターネット経由の送信先なら上限もそこまで上がる")
+    func raisesToPublicInternet() {
+        #expect(raised(current: .loopback, needed: .publicInternet)
+                == ["loopback", "privateNetwork", "publicInternet"])
+    }
+
+    /// **必要な分だけ。** 社内サーバに同意しただけでインターネットまで開けない。
+    @Test("社内サーバなら社内 LAN までしか上げない")
+    func raisesOnlyAsFarAsNeeded() {
+        #expect(raised(current: .loopback, needed: .privateNetwork)
+                == ["loopback", "privateNetwork"])
+    }
+
+    /// 既に足りているなら触らない。**同意で勝手に狭まっても困る。**
+    @Test("既に上限が足りていれば変えない")
+    func keepsCeilingWhenSufficient() {
+        #expect(raised(current: .publicInternet, needed: .privateNetwork)
+                == ["loopback", "privateNetwork", "publicInternet"])
+    }
+
+    /// 解決できなかったときに勝手に広げない。
+    @Test("到達範囲が判定できなければ広げない")
+    func doesNotRaiseWhenUnknown() {
+        #expect(raised(current: .loopback, needed: nil) == ["loopback"])
+    }
+
+    /// ループバックの自前サーバなら、上限は据え置きのまま使える。
+    @Test("loopback 宛なら上限は動かない")
+    func loopbackNeedsNoChange() {
+        #expect(raised(current: .loopback, needed: .loopback) == ["loopback"])
+    }
+}

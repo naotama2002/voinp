@@ -149,6 +149,7 @@ struct RecognitionSettings: View {
     @State private var termsText: String = ""
     @State private var showingConsent = false
     @State private var apiKeyInput = ""
+    @State private var resolvedReach: EgressClass?
 
     var body: some View {
         Form {
@@ -212,11 +213,16 @@ struct RecognitionSettings: View {
                 refinementHost: model.settings.refinement.enabled
                     ? URL(string: model.settings.refinement.openaiCompatible.baseURL)?.host
                     : nil,
+                reach: resolvedReach,
+                currentCeiling: EgressClass(name: model.maxEgressClassName) ?? .loopback,
                 onConsent: {
-                    model.grantAudioEgressConsent(host: consentHost)
+                    // 上限も一緒に上げる。ダイアログでそのことを見せたうえで。
+                    model.grantAudioEgressConsent(host: consentHost, reach: resolvedReach)
                     showingConsent = false
                 },
                 onCancel: { showingConsent = false })
+            // **ホスト名から推測せず、実際に解決する。**
+            .task { resolvedReach = await model.resolveReach(of: consentHost) }
         }
     }
 
@@ -424,6 +430,10 @@ struct PrivacySettings: View {
                 .disabled(!model.settings.privacy.allowNetwork)
                 Text("解決後のアドレスで判定します。ホスト名や「自社運用」という申告では広がりません。"
                      + "社内プロキシ経由になる場合は、その先が基準になります。")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                Text("通常は自分で触る必要はありません。クラウド認識を有効にするとき、"
+                     + "送信先がこの上限を超えていれば同意ダイアログで一緒に確認します。"
+                     + "狭めたいときだけここで変えてください。")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
 

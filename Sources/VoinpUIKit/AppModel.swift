@@ -505,6 +505,42 @@ public final class AppModel {
         }
     }
 
+    /// クラウド認識の API キーを保存する。**校正側とは別の口座**。
+    /// 同じホストに STT と LLM の両方を向けたときに鍵が混ざらない。
+    public func storeTranscriptionAPIKey(_ key: String, forEndpoint endpoint: String) {
+        guard let store = dependencies.credentials,
+              let host = URL(string: endpoint)?.host,
+              let ref = CredentialRef.openAIRealtime(host: host) else { return }
+        do {
+            try store.write(key, to: ref)
+        } catch {
+            Log.config.error("API キーを保存できません: \(String(describing: error), privacy: .public)")
+            lastError = "API キーを保存できませんでした"
+        }
+    }
+
+    /// ネットワークのマスタースイッチ。
+    ///
+    /// **切ると音声も書き起こしも即座に止まる。** `cloudTranscriptionDestination` の
+    /// 1 番目の条件なので、切った瞬間にローカル認識へ戻る。
+    public func setNetworkAllowed(_ allowed: Bool) {
+        update { $0.privacy.allowNetwork = allowed }
+    }
+
+    /// どこまで遠くへ出してよいか。**強制に使う唯一の軸。**
+    /// 申告（自社運用かどうか）では広がらない。
+    public func setMaxEgressClass(_ name: String) {
+        let ladder = ["loopback", "privateNetwork", "publicInternet"]
+        guard let index = ladder.firstIndex(of: name) else { return }
+        update { $0.privacy.allowedEgressClasses = Array(ladder.prefix(index + 1)) }
+    }
+
+    /// 現在の上限。
+    public var maxEgressClassName: String {
+        let ladder = ["loopback", "privateNetwork", "publicInternet"]
+        return ladder.last { settings.privacy.allowedEgressClasses.contains($0) } ?? "loopback"
+    }
+
     /// まだ保存していないホストへモデル一覧を取りに行くための一時許可。
     ///
     /// ホスト許可リストは設定から**導出**されるので、保存前の URL は通らない。

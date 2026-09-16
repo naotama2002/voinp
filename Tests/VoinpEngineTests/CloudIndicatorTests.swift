@@ -56,3 +56,49 @@ struct CloudIndicatorTests {
         #expect(s.cloudTranscriptionDestination != nil)
     }
 }
+
+/// 送信の上限（到達範囲）を操作できること。
+///
+/// **強制に使う唯一の軸。** ここが広がらないと、同意しても接続できない。
+/// Azure は `publicInternet` に解決されるので、既定の `["loopback"]` では通らない。
+@Suite("到達範囲の上限")
+struct EgressClassLadderTests {
+
+    private func ladder(_ names: [String]) -> Settings {
+        var s = Settings()
+        s.privacy.allowedEgressClasses = names
+        return s
+    }
+
+    /// 上限を上げると、それ以下も含まれること。
+    /// 「インターネットを許す」が「LAN は許さない」になっては困る。
+    @Test("上限を上げると下位も含む")
+    func ladderIsCumulative() {
+        let s = ladder(["loopback", "privateNetwork", "publicInternet"])
+        #expect(s.privacy.allowedEgressClasses.contains("loopback"))
+        #expect(s.privacy.allowedEgressClasses.contains("privateNetwork"))
+    }
+
+    @Test("既定はこの Mac の中だけ")
+    func defaultIsLoopbackOnly() {
+        #expect(Settings().privacy.allowedEgressClasses == ["loopback"])
+    }
+
+    /// 既定のままではクラウドへ繋がらないこと。
+    /// 同意しただけでは足りない、という多層防御がここに現れる。
+    @Test("同意しても上限が loopback なら外へは出られない")
+    func consentAloneIsNotEnoughToReachInternet() {
+        var s = Settings()
+        s.privacy.allowNetwork = true
+        s.transcription.provider = CloudTranscriptionProviderID.openAIRealtime
+        s.transcription.realtime.endpointURL = "wss://example.openai.azure.com/openai/v1/realtime"
+        s.privacy.audioEgress.consentedHost = "example.openai.azure.com"
+        s.privacy.audioEgress.noticeVersion = AudioEgressNotice.currentVersion
+
+        // 送信先としては現れる（5 条件は揃っている）
+        #expect(s.cloudTranscriptionDestination != nil)
+        // しかし上限が loopback なので、EgressGate が到達範囲で拒否する
+        #expect(s.privacy.allowedEgressClasses == ["loopback"],
+                "上限は別のスイッチ。同意では広がらない")
+    }
+}

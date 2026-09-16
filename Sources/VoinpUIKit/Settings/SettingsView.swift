@@ -148,6 +148,7 @@ struct RecognitionSettings: View {
     let model: AppModel
     @State private var termsText: String = ""
     @State private var showingConsent = false
+    @State private var apiKeyInput = ""
 
     var body: some View {
         Form {
@@ -285,6 +286,24 @@ struct RecognitionSettings: View {
                                     set: { v in model.update {
                                         $0.transcription.realtime.model = v } }))
 
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("API キー").font(.system(size: 11)).foregroundStyle(.secondary)
+                        HStack {
+                            SecureField("入力すると Keychain に保存されます", text: $apiKeyInput)
+                                .textFieldStyle(.roundedBorder)
+                                .labelsHidden()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Button("保存") {
+                                model.storeTranscriptionAPIKey(
+                                    apiKeyInput,
+                                    forEndpoint: model.settings.transcription.realtime.endpointURL)
+                                apiKeyInput = ""   // 画面に残さない
+                            }
+                            .disabled(apiKeyInput.isEmpty
+                                      || model.settings.transcription.realtime.endpointURL.isEmpty)
+                        }
+                    }
+
                     Picker("認証ヘッダ", selection: Binding(
                         get: { model.settings.transcription.realtime.authScheme },
                         set: { v in model.update {
@@ -386,6 +405,38 @@ struct PrivacySettings: View {
                 row("整形後テキスト", "挿入先のアプリのみ")
             }
 
+            Section("ネットワーク") {
+                // **マスタースイッチ。** ここを切ると音声も書き起こしも即座に止まる。
+                Toggle("ネットワークへの送信を許可する", isOn: Binding(
+                    get: { model.settings.privacy.allowNetwork },
+                    set: { model.setNetworkAllowed($0) }))
+                Text("切ると、クラウド認識も LLM 校正も即座にローカルへ戻ります。")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+
+                // **強制に使う唯一の軸。** 申告では広がらない。
+                Picker("どこまで送信を許すか", selection: Binding(
+                    get: { model.maxEgressClassName },
+                    set: { model.setMaxEgressClass($0) })) {
+                    Text("この Mac の中だけ（loopback）").tag("loopback")
+                    Text("社内 LAN まで").tag("privateNetwork")
+                    Text("インターネット経由も許す").tag("publicInternet")
+                }
+                .disabled(!model.settings.privacy.allowNetwork)
+                Text("解決後のアドレスで判定します。ホスト名や「自社運用」という申告では広がりません。"
+                     + "社内プロキシ経由になる場合は、その先が基準になります。")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+
+            if let consented = consentRecord {
+                Section("音声送信の同意") {
+                    row("同意先", consented.host)
+                    row("日時", consented.at)
+                    Button("同意を取り消してローカルに戻す") {
+                        model.revokeAudioEgressConsent()
+                    }
+                }
+            }
+
             Section("このアプリが行わないこと") {
                 ForEach([
                     "利用統計・テレメトリの送信",
@@ -407,6 +458,13 @@ struct PrivacySettings: View {
 
     private func row(_ kind: String, _ dest: String) -> some View {
         LabeledContent(kind) { Text(dest).font(.system(size: 12)).foregroundStyle(.secondary) }
+    }
+
+    /// 同意の記録。**設定ファイルに残っていることを画面でも見せる。**
+    private var consentRecord: (host: String, at: String)? {
+        let e = model.settings.privacy.audioEgress
+        guard !e.consentedHost.isEmpty else { return nil }
+        return (e.consentedHost, e.consentedAt ?? "不明")
     }
 }
 

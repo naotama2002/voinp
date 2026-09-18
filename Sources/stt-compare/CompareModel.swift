@@ -14,6 +14,9 @@ final class CompareModel {
     private(set) var results: [EngineResult] = []
     private(set) var isRecording = false
     private(set) var note: String?
+    /// 取り込めたチャンク数と音量。**「音が来ていない」と「認識されない」を切り分ける。**
+    private(set) var capturedChunks = 0
+    private(set) var peakLevel: Float = 0
     var script = ""
 
     let engines: [Engine]
@@ -41,7 +44,14 @@ final class CompareModel {
     }
 
     private func start() async {
+        // **許可を先に取る。** `AVAudioEngine.start()` は拒否されていても
+        // 成功し、無音を返す（エラーが出ないので気づけない。実際に踏んだ）。
+        // voinp 本体の Permissions に同じ注意が書いてある。
+        guard await ensureMicrophone() else { return }
+
         note = nil
+        capturedChunks = 0
+        peakLevel = 0
         results = engines.map { EngineResult(id: $0.id, displayName: $0.displayName) }
 
         for engine in engines {
@@ -67,12 +77,19 @@ final class CompareModel {
         do {
             // **マイクは 1 回だけ開く。** エンジンごとに録り直すと、
             // 話し方の違いが結果の違いに化ける。
-            let stream = try await capture.start(format: ComparisonAudioFormat.capture) { _ in }
+            let stream = try await capture.start(format: ComparisonAudioFormat.capture) {
+                [weak self] level in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.peakLevel = max(self.peakLevel, level)
+                }
+            }
             isRecording = true
             pump = Task { [weak self] in
                 for await chunk in stream {
                     guard let self else { break }
                     let lanes = await self.fanout.distribute(chunk)
+                    await MainActor.run { self.capturedChunks += 1 }
                     for (id, converted) in lanes {
                         await run.append(converted, for: id)
                     }
@@ -87,9 +104,40 @@ final class CompareModel {
 
     private func stop() async {
         isRecording = false
-        pump?.cancel()
+        // **順序は voinp 本体に合わせる。** 先に pump を切ると、
+        // 取り込み済みで未送信のチャンクが捨てられる。
         await capture.stop()
+        pump?.cancel()
         await run?.stop()
+    }
+
+    /// マイクの許可を確かめ、必要なら求める。
+    ///
+    /// 一度拒否されるとアプリ内ダイアログは二度と出せず、
+    /// システム設定で許可しても**再起動するまで反映されない**
+    /// （TCC の判断を音声サブシステムが握っているため）。
+    /// その場合はそう案内する。
+    private func ensureMicrophone() async -> Bool {
+        if Permissions.isMicrophoneUsable { return true }
+
+        if Permissions.microphoneRequiresRestart {
+            note = "マイクが許可されていません。システム設定で許可したあと、"
+                + "このツールを再起動してください"
+            return false
+        }
+
+        let granted = await Permissions.requestMicrophone()
+        if !granted {
+            note = "マイクの使用が許可されませんでした"
+        }
+        return granted
+    }
+
+    /// 取り込みの状況。**認識されないときに、音が来ていないのかを切り分ける。**
+    var captureSummary: String {
+        guard capturedChunks > 0 else { return "音声が 1 つも届いていません" }
+        return "取り込み \(capturedChunks) チャンク / 最大音量 "
+            + String(format: "%.4f", peakLevel)
     }
 
     /// 結果を表にしてコピーする。**そのまま社内に貼れる形**にしておく。

@@ -205,4 +205,32 @@ struct RealtimeURLTests {
         #expect(realtimeURL(from: "") == nil)
         #expect(realtimeURL(from: "   ") == nil)
     }
+
+    /// **実機の設定で踏んだ形。** クエリが先に付いている URL に
+    /// 素朴に `/realtime` を足すと、クエリの後ろに付いて壊れる:
+    ///   `.../v1?intent=transcription/realtime`
+    @Test("クエリが先に付いていても壊さない")
+    func handlesQueryBeforePath() {
+        let url = realtimeURL(from:
+            "wss://x.openai.azure.com/openai/v1?intent=transcription")
+        #expect(url?.path == "/openai/v1/realtime", "パスに /realtime が入ること")
+        #expect(url?.query == "intent=transcription", "クエリが 1 つだけ残ること")
+    }
+
+    /// intent を二重に付けない。
+    @Test("intent を重複させない")
+    func doesNotDuplicateIntent() {
+        let url = realtimeURL(from:
+            "wss://x.openai.azure.com/openai/v1/realtime?intent=transcription")
+        #expect(url?.query == "intent=transcription")
+    }
+
+    /// 他のクエリがあっても残す。
+    @Test("他のクエリを落とさない")
+    func keepsOtherQueryItems() {
+        let url = realtimeURL(from: "wss://x.openai.azure.com/openai/v1?api-version=2026-05-01")
+        #expect(url?.query?.contains("api-version=2026-05-01") == true)
+        #expect(url?.query?.contains("intent=transcription") == true)
+        #expect(url?.path == "/openai/v1/realtime")
+    }
 }

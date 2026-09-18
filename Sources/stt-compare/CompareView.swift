@@ -137,6 +137,9 @@ struct CompareView: View {
             Label(model.egressSummary, systemImage: "antenna.radiowaves.left.and.right")
                 .font(.system(size: 11))
                 .foregroundStyle(.orange)
+            // 取り込みの状況。認識されないときの切り分けに使う。
+            Text(model.captureSummary)
+                .font(.system(size: 11)).foregroundStyle(.secondary)
             Spacer()
             if let note = model.note {
                 Text(note).font(.system(size: 11)).foregroundStyle(.secondary)

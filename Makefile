@@ -9,12 +9,21 @@ APPDIR        := build/$(APP).app
 INSTALLDIR    := $(HOME)/Applications/$(APP).app
 ENTITLEMENTS  := Resources/voinp.entitlements
 
+# 認識エンジンの比較ツール。**本体と別の bundle ID を持つ。**
+# TCC の許可も別々になるので、比較ツールに与えた許可が voinp 本体に及ばない。
+CMP_APP       := STTCompare
+CMP_BUNDLE_ID := com.naotama2002.stt-compare
+CMP_PRODUCT   := stt-compare
+CMP_BIN       := $(shell swift build -c $(CONFIG) --show-bin-path)/$(CMP_PRODUCT)
+CMP_APPDIR    := build/$(CMP_APP).app
+CMP_INSTALLDIR := $(HOME)/Applications/$(CMP_APP).app
+
 # ad-hoc 署名だと designated requirement が cdhash になり、リビルドのたびに
 # TCC の許可が消える。必ず実 identity で署名する。
 SIGN_IDENTITY ?= $(shell security find-identity -v -p codesigning \
                    | awk '/Developer ID Application|Apple Development/ {print $$2; exit}')
 
-.PHONY: build bundle sign verify install run run-unattached run-sim run-sim-slow use-en use-ja use-locale locales launch logs logs-recent test clean reset-permissions help download-model
+.PHONY: compare compare-install build bundle sign verify install run run-unattached run-sim run-sim-slow use-en use-ja use-locale locales launch logs logs-recent test clean reset-permissions help download-model
 
 help:
 	@echo "make test      テストを実行"
@@ -27,6 +36,7 @@ help:
 	@echo "make use-ja    ja-JP に戻す"
 	@echo "make use-locale LOCALE=zh-TW  任意のロケールへ（未取得なら本物の DL）"
 	@echo "make verify    署名・依存・プライバシー保証の検証"
+	@echo "make compare   認識エンジンの比較ツールを起動（.app として署名）"
 	@echo "make download-model  日本語認識モデルを取得（初回のみ）"
 	@echo "make reset-permissions  TCC の許可をリセット"
 
@@ -153,3 +163,42 @@ reset-permissions:
 
 clean:
 	rm -rf .build build
+
+# ── 認識エンジンの比較ツール ──────────────────────────────────────
+#
+# **.app にする理由は TCC。** swift run で起動するとマイクの許可が
+# ターミナルに紐づく（そして一度拒否すると再起動するまで戻らない）。
+# .app なら許可はこのツール自身に付き、本体とも別になる。
+
+compare-bundle:
+	swift build -c $(CONFIG) --product $(CMP_PRODUCT)
+	rm -rf $(CMP_APPDIR)
+	mkdir -p $(CMP_APPDIR)/Contents/MacOS
+	cp $(CMP_BIN) $(CMP_APPDIR)/Contents/MacOS/$(CMP_PRODUCT)
+	printf 'APPL????' > $(CMP_APPDIR)/Contents/PkgInfo
+	sed -e 's/__VERSION__/$(VERSION)/g' -e 's/__BUILD__/$(BUILD)/g' \
+	    -e 's/__BUNDLE_ID__/$(CMP_BUNDLE_ID)/g' \
+	    Resources/STTCompare-Info.plist > $(CMP_APPDIR)/Contents/Info.plist
+
+compare-install: compare-bundle
+	@[ -n "$(SIGN_IDENTITY)" ] || { echo "署名 identity が見つかりません"; exit 1; }
+	codesign --force --options runtime --timestamp=none \
+	         --entitlements $(ENTITLEMENTS) \
+	         --sign $(SIGN_IDENTITY) \
+	         $(CMP_APPDIR)
+	rm -rf $(CMP_INSTALLDIR)
+	ditto $(CMP_APPDIR) $(CMP_INSTALLDIR)
+	@echo "installed: $(CMP_INSTALLDIR)"
+
+# **open -n で起動する。** 直接実行するとターミナルが責任プロセスになり、
+# TCC の許可がそちらへ付く（本体で踏んだ問題と同じ）。
+#
+# 鍵は .envrc から引き継ぐ。`make` は .envrc を読まないので、
+# 呼び出し側のシェルで direnv が効いている前提。
+# 効いていなければ voinp の Keychain から拾う（比較ツール側で対応済み）。
+compare: compare-install
+	open -n $(CMP_INSTALLDIR) \
+	  $(if $(AZURE_API_KEY),--env AZURE_API_KEY="$(AZURE_API_KEY)") \
+	  $(if $(OPENAI_API_KEY),--env OPENAI_API_KEY="$(OPENAI_API_KEY)") \
+	  $(if $(GEMINI_API_KEY),--env GEMINI_API_KEY="$(GEMINI_API_KEY)")
+	@echo "起動しました。鍵が渡っていなければ voinp の Keychain から拾います。"

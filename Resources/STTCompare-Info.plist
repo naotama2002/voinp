@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>STT Compare</string>
+	<key>CFBundleDisplayName</key>
+	<string>音声認識エンジンの比較</string>
+	<key>CFBundleExecutable</key>
+	<string>stt-compare</string>
+	<key>CFBundleIdentifier</key>
+	<string>__BUNDLE_ID__</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>__VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__BUILD__</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>26.0</string>
+
+	<!-- **本体と別の bundle ID を持つ。** TCC の許可も別々になるので、
+	     比較ツールに与えた許可が voinp 本体に及ばない。 -->
+
+	<!-- 評価用の道具であることを、許可を求める場面で明示する。
+	     何に使うか分からないまま許可させない。 -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>複数の音声認識エンジンを同じ発話で比較するためにマイクを使用します。設定した送信先にのみ音声を送ります。</string>
+
+	<!-- メニューバー常駐ではなく、通常のウィンドウを持つアプリ。 -->
+	<key>LSUIElement</key>
+	<false/>
+</dict>
+</plist>

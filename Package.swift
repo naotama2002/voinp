@@ -45,7 +45,5 @@ let package = Package(
         .testTarget(name: "VoinpCoreTests", dependencies: ["VoinpCore"], swiftSettings: strict),
         .testTarget(name: "VoinpEngineTests", dependencies: ["VoinpEngine"], swiftSettings: strict),
         .testTarget(name: "VoinpNetTests", dependencies: ["VoinpNet"], swiftSettings: strict),
-        .testTarget(name: "VoinpProvidersTests", dependencies: ["VoinpProviders"],
-                    swiftSettings: strict),
     ]
 )

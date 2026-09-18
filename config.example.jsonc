@@ -24,20 +24,6 @@
     "modelRetention": "processLifetime",  // "whileInUse" | "lingering" | "processLifetime"
     "showPartialResults": true,
     "punctuation": "automatic",           // "automatic" | "off"
-    // クラウド音声認識。**既定では使わない。**
-    // 有効化には allowNetwork と同意ダイアログの承諾も要る（docs/06 参照）。
-    "realtime": {
-      "endpointURL": "",              // wss://<resource>.openai.azure.com/openai/v1/realtime?intent=transcription
-      "model": "",                    // Azure ではデプロイ名
-      "authHeader": "Authorization",  // Azure は "api-key"
-      "authScheme": "bearer",         // Azure は "raw"
-      "operatorKind": "vendor",       // 表示のみ。許可を広げない
-      "requiresAPIKey": true,
-      "languages": ["ja", "en"],      // 複数の言語ヒントを渡せる
-      "delay": "low",                 // minimal | low | medium | high | xhigh
-      "noiseReduction": "near_field",
-      "handshakeTimeoutMs": 5000
-    },
     "termHints": ["kintone", "サイボウズ", "Garoon", "voinp"],
     "termHintsFile": null                 // 大きい辞書は 1 行 1 語の別ファイルへ
   },
@@ -80,10 +66,7 @@
   },
 
   "privacy": {
-    "allowNetwork": false,
-    // 音声を外へ出すことへの同意。**空のままなら音声は一切出ない。**
-    // 設定画面で同意すると、ホスト名と日時と文面の版が記録される。
-    "audioEgress": { "consentedHost": "", "consentedAt": null, "noticeVersion": 0 },                   // マスタースイッチ
+    "allowNetwork": false,                   // マスタースイッチ
     // 到達範囲の上限。**強制に使う唯一の軸**。
     // 社内サーバ (https://llm.example.co.jp) を使うなら publicInternet が必要になる。
     // 「インターネットに送る」ではなく「この Mac とネットワークの外まで届く」の意味。

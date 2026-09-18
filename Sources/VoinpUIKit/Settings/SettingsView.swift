@@ -147,17 +147,9 @@ struct GeneralSettings: View {
 struct RecognitionSettings: View {
     let model: AppModel
     @State private var termsText: String = ""
-    @State private var showingConsent = false
-    @State private var apiKeyInput = ""
-    @State private var resolvedReach: EgressClass?
-    /// Keychain の状態は `@Observable` の追跡対象外なので、
-    /// 保存・削除したときに自分で引き直す。
-    @State private var keyStateToken = 0
 
     var body: some View {
         Form {
-            engineSection
-
             Section("言語") {
                 Picker("認識する言語", selection: Binding(
                     get: { model.settings.transcription.locale },
@@ -208,190 +200,6 @@ struct RecognitionSettings: View {
         }
         .formStyle(.grouped)
         .onAppear { termsText = model.settings.transcription.termHints.joined(separator: "\n") }
-        .sheet(isPresented: $showingConsent) {
-            AudioEgressConsentSheet(
-                host: consentHost,
-                port: 443,
-                operatorKind: model.settings.transcription.realtime.operatorKind,
-                refinementHost: model.settings.refinement.enabled
-                    ? URL(string: model.settings.refinement.openaiCompatible.baseURL)?.host
-                    : nil,
-                reach: resolvedReach,
-                currentCeiling: EgressClass(name: model.maxEgressClassName) ?? .loopback,
-                onConsent: {
-                    // 上限も一緒に上げる。ダイアログでそのことを見せたうえで。
-                    model.grantAudioEgressConsent(host: consentHost, reach: resolvedReach)
-                    showingConsent = false
-                },
-                onCancel: { showingConsent = false })
-            // **ホスト名から推測せず、実際に解決する。**
-            .task { resolvedReach = await model.resolveReach(of: consentHost) }
-        }
-    }
-
-    /// 認識エンジンの選択。**言語の上に置く。**
-    /// どのエンジンで録音しているかが一番上にないと、見落としたまま使うことになる。
-    private var engineSection: some View {
-        Section("認識エンジン") {
-            Picker("音声をどこで認識するか", selection: Binding(
-                get: { model.usesCloudTranscription ? "cloud" : "local" },
-                set: { choice in
-                    if choice == "cloud" {
-                        // **同意を取るまで設定を書き換えない。**
-                        showingConsent = true
-                    } else {
-                        model.revokeAudioEgressConsent()
-                    }
-                })) {
-                Text("この Mac で認識（外に出ません）").tag("local")
-                Text("クラウドで認識").tag("cloud")
-                    .disabled(!model.dependencies.supportsCloudTranscription)
-            }
-            .pickerStyle(.radioGroup)
-            .disabled(cloudRequirementsMissing && !model.usesCloudTranscription)
-
-            if !model.dependencies.supportsCloudTranscription {
-                Label("このビルドはネットワーク機能を含みません（オフライン版）",
-                      systemImage: "lock.fill")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            } else if model.usesCloudTranscription, let d = model.audioDestination {
-                Label("音声は \(d.host) へ送信されます", systemImage: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 11)).foregroundStyle(.orange)
-            } else {
-                Label("音声はこの Mac から出ません", systemImage: "lock.fill")
-                    .font(.system(size: 11)).foregroundStyle(.green)
-            }
-
-            cloudEndpointFields
-        }
-    }
-
-    /// クラウドを選ぶのに足りていない条件。
-    /// **「選べない」だけにせず、何が足りないかを出す。**
-    private var cloudRequirementsMissing: Bool {
-        !model.settings.privacy.allowNetwork
-            || model.settings.transcription.realtime.endpointURL.isEmpty
-            || model.settings.transcription.realtime.model.isEmpty
-    }
-
-    private var consentHost: String {
-        URL(string: model.settings.transcription.realtime.endpointURL)?.host ?? ""
-    }
-
-    @ViewBuilder
-    private var cloudEndpointFields: some View {
-        if model.dependencies.supportsCloudTranscription {
-            DisclosureGroup("クラウドの接続先") {
-                VStack(alignment: .leading, spacing: 8) {
-                    labeledField("エンドポイント URL",
-                                 placeholder: "wss://<リソース>.openai.azure.com/openai/v1/realtime?intent=transcription",
-                                 text: Binding(
-                                    get: { model.settings.transcription.realtime.endpointURL },
-                                    set: { v in model.update {
-                                        $0.transcription.realtime.endpointURL = v } }))
-                    labeledField("モデル（Azure ではデプロイ名）", placeholder: "gpt-live-transcribe",
-                                 text: Binding(
-                                    get: { model.settings.transcription.realtime.model },
-                                    set: { v in model.update {
-                                        $0.transcription.realtime.model = v } }))
-
-                    apiKeyField
-
-                    Picker("認証ヘッダ", selection: Binding(
-                        get: { model.settings.transcription.realtime.authScheme },
-                        set: { v in model.update {
-                            $0.transcription.realtime.authScheme = v
-                            $0.transcription.realtime.authHeader =
-                                v == "raw" ? "api-key" : "Authorization"
-                        } })) {
-                        Text("Authorization: Bearer（OpenAI）").tag("bearer")
-                        Text("api-key（Azure OpenAI）").tag("raw")
-                    }
-
-                    if !model.settings.privacy.allowNetwork {
-                        Label("先に セキュリティ でネットワークを有効にしてください",
-                              systemImage: "exclamationmark.triangle")
-                            .font(.system(size: 11)).foregroundStyle(.orange)
-                    }
-                    Text("URL は貼ったものをそのまま使います。正規化しません。")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                }
-                .padding(.top, 4)
-            }
-        }
-    }
-
-    /// API キーの入力と状態。
-    ///
-    /// **入力欄にマスクを入れない。** `••••••` を `text` に流し込むと、
-    /// そのまま保存ボタンを押したときに**その文字列が鍵として保存される**。
-    /// 入力欄は常に空（＝新しい鍵を入れる場所）にして、
-    /// 保存されているかどうかは別の行で示す。
-    ///
-    /// 口座はホスト単位なので、状態表示も接続先に追随させる。
-    /// 接続先を変えたら「未設定」に戻るのが正しい。
-    @ViewBuilder
-    private var apiKeyField: some View {
-        let endpoint = model.settings.transcription.realtime.endpointURL
-        let stored = model.hasTranscriptionAPIKey(forEndpoint: endpoint)
-
-        VStack(alignment: .leading, spacing: 4) {
-            Text("API キー").font(.system(size: 11)).foregroundStyle(.secondary)
-
-            HStack {
-                SecureField(stored ? "変更する場合だけ新しいキーを入力"
-                                   : "キーを入力すると Keychain に保存されます",
-                            text: $apiKeyInput)
-                    .textFieldStyle(.roundedBorder)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Button(stored ? "更新" : "保存") {
-                    model.storeTranscriptionAPIKey(apiKeyInput, forEndpoint: endpoint)
-                    apiKeyInput = ""   // 画面に残さない
-                    keyStateToken &+= 1
-                }
-                // 空のまま押せてしまうと、空文字を保存して鍵を壊す。
-                .disabled(apiKeyInput.isEmpty || endpoint.isEmpty)
-            }
-
-            HStack(spacing: 8) {
-                if endpoint.isEmpty {
-                    Label("先に接続先の URL を入れてください", systemImage: "info.circle")
-                        .foregroundStyle(.secondary)
-                } else if stored {
-                    // 値は出さない。**保存されている事実だけ**を示す。
-                    Label("この接続先のキーは保存済み（••••••••）",
-                          systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                    Button("削除") {
-                        model.removeTranscriptionAPIKey(forEndpoint: endpoint)
-                        keyStateToken &+= 1
-                    }
-                    .buttonStyle(.link)
-                } else {
-                    Label("この接続先のキーは未設定", systemImage: "exclamationmark.circle")
-                        .foregroundStyle(.orange)
-                }
-                Spacer(minLength: 0)
-            }
-            .font(.system(size: 11))
-            // 保存・削除・接続先の変更で引き直す。
-            .id("\(keyStateToken)-\(endpoint)")
-        }
-    }
-
-    /// `Form` の中では `TextField` がラベル付き行として扱われ、入力欄が右に寄る。
-    /// `labelsHidden()` で左詰めにする（校正の設定で 3 度直した箇所と同じ）。
-    private func labeledField(_ title: String, placeholder: String,
-                              text: Binding<String>) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
-            TextField(placeholder, text: text)
-                .textFieldStyle(.roundedBorder)
-                .labelsHidden()
-                .font(.system(size: 12, design: .monospaced))
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
     }
 }
 
@@ -447,50 +255,9 @@ struct PrivacySettings: View {
             }
 
             Section("何がどこへ送られるか") {
-                // **ここが最初に嘘になる行だった。** 送信先は設定から導出する。
-                if let d = model.audioDestination {
-                    row("音声", "\(d.host):\(d.port) へ送信")
-                } else {
-                    row("音声", "送信しません（この Mac 上でのみ処理）")
-                }
+                row("音声", "送信しません（この Mac 上でのみ処理）")
                 row("書き起こし", model.settings.refinement.enabled ? "校正のため LLM へ" : "送信しません")
                 row("整形後テキスト", "挿入先のアプリのみ")
-            }
-
-            Section("ネットワーク") {
-                // **マスタースイッチ。** ここを切ると音声も書き起こしも即座に止まる。
-                Toggle("ネットワークへの送信を許可する", isOn: Binding(
-                    get: { model.settings.privacy.allowNetwork },
-                    set: { model.setNetworkAllowed($0) }))
-                Text("切ると、クラウド認識も LLM 校正も即座にローカルへ戻ります。")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-
-                // **強制に使う唯一の軸。** 申告では広がらない。
-                Picker("どこまで送信を許すか", selection: Binding(
-                    get: { model.maxEgressClassName },
-                    set: { model.setMaxEgressClass($0) })) {
-                    Text("この Mac の中だけ（loopback）").tag("loopback")
-                    Text("社内 LAN まで").tag("privateNetwork")
-                    Text("インターネット経由も許す").tag("publicInternet")
-                }
-                .disabled(!model.settings.privacy.allowNetwork)
-                Text("解決後のアドレスで判定します。ホスト名や「自社運用」という申告では広がりません。"
-                     + "社内プロキシ経由になる場合は、その先が基準になります。")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                Text("通常は自分で触る必要はありません。クラウド認識を有効にするとき、"
-                     + "送信先がこの上限を超えていれば同意ダイアログで一緒に確認します。"
-                     + "狭めたいときだけここで変えてください。")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-
-            if let consented = consentRecord {
-                Section("音声送信の同意") {
-                    row("同意先", consented.host)
-                    row("日時", consented.at)
-                    Button("同意を取り消してローカルに戻す") {
-                        model.revokeAudioEgressConsent()
-                    }
-                }
             }
 
             Section("このアプリが行わないこと") {
@@ -514,13 +281,6 @@ struct PrivacySettings: View {
 
     private func row(_ kind: String, _ dest: String) -> some View {
         LabeledContent(kind) { Text(dest).font(.system(size: 12)).foregroundStyle(.secondary) }
-    }
-
-    /// 同意の記録。**設定ファイルに残っていることを画面でも見せる。**
-    private var consentRecord: (host: String, at: String)? {
-        let e = model.settings.privacy.audioEgress
-        guard !e.consentedHost.isEmpty else { return nil }
-        return (e.consentedHost, e.consentedAt ?? "不明")
     }
 }
 

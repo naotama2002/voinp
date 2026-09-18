@@ -68,14 +68,6 @@ public extension CredentialRef {
         return CredentialRef(account: "openai-compatible/apiKey@\(h)")
     }
 
-    /// クラウド音声認識の API キー。**校正側とは別の口座**にする。
-    /// 同じホストに STT と LLM の両方を向けたときに鍵が混ざらない。
-    static func openAIRealtime(host: String?) -> CredentialRef? {
-        guard let h = host?.trimmingCharacters(in: .whitespaces).lowercased(), !h.isEmpty
-        else { return nil }
-        return CredentialRef(account: "openai-realtime/apiKey@\(h)")
-    }
-
     /// URL 文字列から。スキームが無い入力も受ける（`example.com:1234` など）。
     static func openAICompatible(urlString: String) -> CredentialRef? {
         let raw = urlString.trimmingCharacters(in: .whitespaces)

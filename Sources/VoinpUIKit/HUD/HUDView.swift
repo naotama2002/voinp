@@ -4,35 +4,6 @@ import VoinpCore
 struct HUDView: View {
     let model: AppModel
 
-    /// **どちらのエンジンで録音しているかを常に出す。**
-    ///
-    /// 「クラウドのときだけ出す」にしない。印が無いことは情報にならず、
-    /// 見落としと区別できない。ローカルのときも肯定形で書く。
-    ///
-    /// 退避したときは、黙って切り替えずにその事実を出す。
-    /// 表示と実際の経路が食い違うのが一番よくない。
-    @ViewBuilder
-    private var engineBadge: some View {
-        if model.degradedToLocal {
-            badge("ローカルに退避", tint: .orange)
-        } else if let destination = model.audioDestination {
-            badge("クラウド · \(destination.host)", tint: .orange)
-        } else {
-            badge("ローカル", tint: .secondary)
-        }
-    }
-
-    private func badge(_ text: String, tint: Color) -> some View {
-        Text(text)
-            .font(.system(size: 10, weight: .medium))
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(tint.opacity(0.15), in: Capsule())
-            .foregroundStyle(tint)
-    }
-
     var body: some View {
         VStack(spacing: 8) {
             HStack(spacing: 10) {
@@ -40,7 +11,6 @@ struct HUDView: View {
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(tint)
                 Text(statusText).font(.system(size: 12, weight: .medium))
-                engineBadge
                 Spacer()
                 if model.phase.isListening {
                     Text("esc でキャンセル")

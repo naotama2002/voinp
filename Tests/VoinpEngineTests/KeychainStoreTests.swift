@@ -103,8 +103,8 @@ struct APIKeyStorageGuardTests {
     /// 「設定済み」と誤解する。
     @Test("ホストが違えば別の口座")
     func keysAreHostScoped() throws {
-        let a = CredentialRef.openAIRealtime(host: "a.example.com")
-        let b = CredentialRef.openAIRealtime(host: "b.example.com")
+        let a = CredentialRef.openAICompatible(host: "a.example.com")
+        let b = CredentialRef.openAICompatible(host: "b.example.com")
         #expect(a != nil && b != nil)
         #expect(a != b)
 

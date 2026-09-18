@@ -85,14 +85,11 @@ public struct Settings: Codable, Equatable, Sendable {
         public var punctuation = "automatic"
         public var termHints: [String] = []
         public var termHintsFile: String?
-        /// クラウド認識の接続先。**既定では空**で、空のままではクラウドを選べない。
-        public var realtime = Realtime()
         public init() {}
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             let d = Self()
             provider = c.value(.provider, d.provider)
-            realtime = c.value(.realtime, d.realtime)
             module = c.value(.module, d.module)
             locale = c.value(.locale, d.locale)
             reserveLocales = c.value(.reserveLocales, d.reserveLocales)
@@ -101,50 +98,6 @@ public struct Settings: Codable, Equatable, Sendable {
             punctuation = c.value(.punctuation, d.punctuation)
             termHints = c.value(.termHints, d.termHints)
             termHintsFile = c.value(.termHintsFile, d.termHintsFile)
-        }
-
-        /// OpenAI Realtime 互換の音声認識。OpenAI 直と Azure OpenAI の両方を想定する。
-        ///
-        /// **ベンダー専用の実装を作らない。** 両者の差は
-        /// (1) 認証ヘッダと置き方 (2) URL の形 の 2 つだけなので、
-        /// それを設定で表現して吸収する。
-        public struct Realtime: Codable, Equatable, Sendable {
-            /// **ユーザーが貼ったものをそのまま使う。正規化しない。**
-            /// 校正側の `baseURL` は探索で書き換わるが、こちらは書き換えない。
-            /// 名前を変えてあるのはその差を明示するため。
-            ///   OpenAI: wss://api.openai.com/v1/realtime?intent=transcription
-            ///   Azure:  wss://<resource>.openai.azure.com/openai/v1/realtime?intent=transcription
-            public var endpointURL = ""
-            /// OpenAI ではモデル名、Azure では**デプロイ名**。
-            public var model = ""
-            /// 認証ヘッダ名。Azure は `api-key`。
-            public var authHeader = "Authorization"
-            /// `bearer`（`Bearer <値>`）か `raw`（生値）。Azure は `raw`。
-            public var authScheme = "bearer"
-            /// 誰が運用しているか。**表示専用の申告で、送信許可を広げない。**
-            public var operatorKind = "vendor"     // self-hosted | vendor
-            public var requiresAPIKey = true
-            /// 言語ヒント。複数渡せる。macOS のエンジンには無い機能。
-            public var languages = ["ja", "en"]
-            /// `minimal` | `low` | `medium` | `high` | `xhigh`
-            public var delay = "low"
-            public var noiseReduction = "near_field"
-            public var handshakeTimeoutMs = 5000
-            public init() {}
-            public init(from decoder: any Decoder) throws {
-                let c = try decoder.container(keyedBy: CodingKeys.self)
-                let d = Self()
-                endpointURL = c.value(.endpointURL, d.endpointURL)
-                model = c.value(.model, d.model)
-                authHeader = c.value(.authHeader, d.authHeader)
-                authScheme = c.value(.authScheme, d.authScheme)
-                operatorKind = c.value(.operatorKind, d.operatorKind)
-                requiresAPIKey = c.value(.requiresAPIKey, d.requiresAPIKey)
-                languages = c.value(.languages, d.languages)
-                delay = c.value(.delay, d.delay)
-                noiseReduction = c.value(.noiseReduction, d.noiseReduction)
-                handshakeTimeoutMs = c.value(.handshakeTimeoutMs, d.handshakeTimeoutMs)
-            }
         }
     }
 
@@ -226,43 +179,15 @@ public struct Settings: Codable, Equatable, Sendable {
         public var extraAllowlistHosts: [String] = []
         public var auditLog = AuditLog()
         public var updateCheck = "never"      // never | manual。auto は存在しない
-        /// 「音声をこの Mac の外へ出すこと」への同意。**既定は未同意。**
-        public var audioEgress = AudioEgress()
         public init() {}
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             let d = Self()
             allowNetwork = c.value(.allowNetwork, d.allowNetwork)
-            audioEgress = c.value(.audioEgress, d.audioEgress)
             allowedEgressClasses = c.value(.allowedEgressClasses, d.allowedEgressClasses)
             extraAllowlistHosts = c.value(.extraAllowlistHosts, d.extraAllowlistHosts)
             auditLog = c.value(.auditLog, d.auditLog)
             updateCheck = c.value(.updateCheck, d.updateCheck)
-        }
-
-        /// 音声を外へ出すことへの同意の記録。
-        ///
-        /// **`UserDefaults` ではなく設定ファイルに置く。** 理由は 2 つ:
-        /// - `EgressPolicySnapshot.derive` と `PrivacyPosture.evaluate` が
-        ///   「設定だけの純粋関数」である性質を壊さない（I/O が混ざるとテストできない）
-        /// - 同僚やセキュリティ担当が、設定ファイルを見て同意の事実を確かめられる
-        ///
-        /// **ホスト単位で記録する。** 送信先を変えたら同意はやり直しになる。
-        public struct AudioEgress: Codable, Equatable, Sendable {
-            /// 同意したホスト。空なら未同意。
-            public var consentedHost = ""
-            /// 同意した日時（ISO8601）。表示と監査のため。
-            public var consentedAt: String?
-            /// 提示した文面の版。文面を実質的に変えたら上げる＝全員の同意が失効する。
-            public var noticeVersion = 0
-            public init() {}
-            public init(from decoder: any Decoder) throws {
-                let c = try decoder.container(keyedBy: CodingKeys.self)
-                let d = Self()
-                consentedHost = c.value(.consentedHost, d.consentedHost)
-                consentedAt = c.value(.consentedAt, d.consentedAt)
-                noticeVersion = c.value(.noticeVersion, d.noticeVersion)
-            }
         }
 
         public struct AuditLog: Codable, Equatable, Sendable {

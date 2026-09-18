@@ -50,13 +50,6 @@ public final class AppModel {
         self.dependencies = dependencies
         self.settings = dependencies.settings
         refreshPermissions()
-        speechRouter = RoutingTranscriptionProvider(
-            local: dependencies.speechProvider,
-            makeCloud: dependencies.makeCloudSpeechProvider,
-            settings: dependencies.settings,
-            onDegrade: { [weak self] in
-                Task { @MainActor in self?.noteCloudDegraded() }
-            })
     }
 
     // MARK: - 起動
@@ -69,67 +62,6 @@ public final class AppModel {
     /// 喋るたびに固定時間だけ待たされ続けていた。
     private let refineFailures = FailureCounter()
 
-    /// 設定に従って認識エンジンを選ぶ。**ここが唯一の音声認識の入口。**
-    /// `dependencies.speechProvider` を直接使わないこと（設定が効かなくなる）。
-    ///
-    /// `@ObservationIgnored` にしてあるのは、`@Observable` の追跡対象にすると
-    /// `lazy` も init アクセサも使えなくなるため。UI から観測する値ではない。
-    @ObservationIgnored private var speechRouter: RoutingTranscriptionProvider!
-
-    /// クラウドからローカルへ退避したことを画面に出す。
-    /// **黙って切り替えない。** 表示と実際の経路が食い違うのが一番よくない。
-    public private(set) var degradedToLocal = false
-
-    /// 音声を外へ出すことに同意する。**ここでだけ `provider` を書き換える。**
-    /// 同意する前にエンジンを切り替えてしまうと、確認を経ずに音声が出る経路ができる。
-    /// - Parameter reach: 送信先の到達範囲。上限がこれに満たなければ**一緒に引き上げる**。
-    ///   同意ダイアログでそのことを明示したうえで呼ぶこと。
-    ///   別画面の知らないスイッチで黙って止めるのは保護ではなく罠になる。
-    public func grantAudioEgressConsent(host: String, reach: EgressClass?) {
-        update {
-            $0.privacy.audioEgress.consentedHost = host.lowercased()
-            $0.privacy.audioEgress.consentedAt = ISO8601DateFormatter().string(from: .now)
-            $0.privacy.audioEgress.noticeVersion = AudioEgressNotice.currentVersion
-            $0.transcription.provider = CloudTranscriptionProviderID.openAIRealtime
-
-            // **必要な分だけ上げる。** 常に publicInternet まで開けたりしない。
-            if let reach, reach > (EgressClass(name: self.maxEgressClassName) ?? .loopback) {
-                let ladder: [EgressClass] = [.loopback, .privateNetwork, .publicInternet]
-                $0.privacy.allowedEgressClasses =
-                    ladder.filter { $0 <= reach }.map(\.name)
-            }
-        }
-    }
-
-    /// 送信先の到達範囲を解決する。オフライン版では nil。
-    public func resolveReach(of host: String) async -> EgressClass? {
-        await dependencies.resolveReach?(host) ?? nil
-    }
-
-    /// 同意を取り消してローカルに戻す。**同意の記録ごと消す。**
-    /// 残しておくと、次に有効化したときに確認が出ない。
-    public func revokeAudioEgressConsent() {
-        update {
-            $0.privacy.audioEgress = Settings.Privacy.AudioEgress()
-            $0.transcription.provider = CloudTranscriptionProviderID.appleSpeechAnalyzer
-        }
-    }
-
-    /// いまクラウドで録音するか。HUD とメニューバーの表示に使う。
-    public var usesCloudTranscription: Bool {
-        settings.cloudTranscriptionDestination != nil
-    }
-
-    /// 音声の送信先（表示用）。
-    public var audioDestination: CloudTranscriptionDestination? {
-        settings.cloudTranscriptionDestination
-    }
-
-    func noteCloudDegraded() {
-        degradedToLocal = true
-        Log.speech.notice("クラウド認識から この Mac の認識へ退避した")
-    }
-
     public func start() {
         hud = HUDPanelController(model: self)
 
@@ -140,7 +72,7 @@ public final class AppModel {
         let makeClient = dependencies.makeLLMClient
         let coord = DictationCoordinator(
             settings: settings,
-            provider: speechRouter,
+            provider: dependencies.speechProvider,
             inserter: DictationCoordinator.makeInserter(settings),
             refine: { [weak self] text in
                 // 早期 return のたびに理由を残す。
@@ -335,7 +267,7 @@ public final class AppModel {
     public func refreshModelReadiness() async {
         let id = settings.transcription.locale
         let request = TranscriptionRequest(locale: Locale(identifier: id))
-        let r = await speechRouter.readiness(for: request)
+        let r = await dependencies.speechProvider.readiness(for: request)
         Log.speech.info("モデル状態: locale=\(id, privacy: .public) readiness=\(String(describing: r), privacy: .public)")
         modelReadiness = r
     }
@@ -356,7 +288,7 @@ public final class AppModel {
             // **上限時間を設ける。** 失敗や停止でプログレスバーが永遠に回り続けると、
             // ユーザーは何が起きているか分からないまま待たされる（実際にそうなった）。
             try await withThrowingTaskGroup(of: Void.self) { group in
-                let provider: any TranscriptionProvider = speechRouter
+                let provider = dependencies.speechProvider
                 let locale = Locale(identifier: settings.transcription.locale)
                 group.addTask {
                     try await provider.downloadModel(for: locale) { p in
@@ -459,8 +391,6 @@ public final class AppModel {
         // 接続先やモデルを直したなら、一時停止を解いてもう一度試させる。
         // 直したのに「連続失敗のため一時停止中」が出続けるのは理不尽。
         let refinementChanged = next.refinement != settings.refinement
-        let transcriptionChanged = next.transcription != settings.transcription
-            || next.privacy.audioEgress != settings.privacy.audioEgress
         settings = next
 
         do {
@@ -470,14 +400,10 @@ public final class AppModel {
             lastError = "設定を保存できませんでした"
         }
 
-        // **認識エンジンの選択にも伝える。** 伝えないと設定を変えても
-        // 再起動するまで前のエンジンを使い続ける。
-        speechRouter.settingsChanged(next)
         Task { await coordinator?.update(settings: next) }
         if hotkeyChanged { restartHotkey() }
         if localeChanged { Task { await refreshModelReadiness() } }
         if refinementChanged { Task { [refineFailures] in await refineFailures.clear() } }
-        if transcriptionChanged { degradedToLocal = false }
     }
 
     /// ホットキーの記録中は既存のホットキーを止める。
@@ -518,62 +444,6 @@ public final class AppModel {
             Log.config.error("API キーを保存できません: \(String(describing: error), privacy: .public)")
             lastError = "API キーを保存できませんでした"
         }
-    }
-
-    /// クラウド認識の API キーを保存する。**校正側とは別の口座**。
-    /// 同じホストに STT と LLM の両方を向けたときに鍵が混ざらない。
-    public func storeTranscriptionAPIKey(_ key: String, forEndpoint endpoint: String) {
-        guard let store = dependencies.credentials,
-              let host = URL(string: endpoint)?.host,
-              let ref = CredentialRef.openAIRealtime(host: host) else { return }
-        do {
-            try store.write(key, to: ref)
-        } catch {
-            Log.config.error("API キーを保存できません: \(String(describing: error), privacy: .public)")
-            lastError = "API キーを保存できませんでした"
-        }
-    }
-
-    /// この接続先の API キーが保存されているか。**値は読まない。**
-    ///
-    /// 口座はホスト単位なので、接続先を変えると別の口座になる。
-    /// 「保存済み」の表示も接続先に追随させないと、
-    /// 前のホストの鍵があるのに新しいホストでは未設定、という状態を見落とす。
-    public func hasTranscriptionAPIKey(forEndpoint endpoint: String) -> Bool {
-        guard let store = dependencies.credentials as? KeychainStore,
-              let host = URL(string: endpoint)?.host,
-              let ref = CredentialRef.openAIRealtime(host: host) else { return false }
-        return store.exists(ref)
-    }
-
-    /// 保存済みの API キーを消す。
-    public func removeTranscriptionAPIKey(forEndpoint endpoint: String) {
-        guard let store = dependencies.credentials,
-              let host = URL(string: endpoint)?.host,
-              let ref = CredentialRef.openAIRealtime(host: host) else { return }
-        try? store.delete(ref)
-    }
-
-    /// ネットワークのマスタースイッチ。
-    ///
-    /// **切ると音声も書き起こしも即座に止まる。** `cloudTranscriptionDestination` の
-    /// 1 番目の条件なので、切った瞬間にローカル認識へ戻る。
-    public func setNetworkAllowed(_ allowed: Bool) {
-        update { $0.privacy.allowNetwork = allowed }
-    }
-
-    /// どこまで遠くへ出してよいか。**強制に使う唯一の軸。**
-    /// 申告（自社運用かどうか）では広がらない。
-    public func setMaxEgressClass(_ name: String) {
-        let ladder = ["loopback", "privateNetwork", "publicInternet"]
-        guard let index = ladder.firstIndex(of: name) else { return }
-        update { $0.privacy.allowedEgressClasses = Array(ladder.prefix(index + 1)) }
-    }
-
-    /// 現在の上限。
-    public var maxEgressClassName: String {
-        let ladder = ["loopback", "privateNetwork", "publicInternet"]
-        return ladder.last { settings.privacy.allowedEgressClasses.contains($0) } ?? "loopback"
     }
 
     /// まだ保存していないホストへモデル一覧を取りに行くための一時許可。
@@ -654,26 +524,18 @@ public final class AppModel {
 
     var menuBarSymbol: String {
         if !missingPermissions.isEmpty { return "exclamationmark.triangle" }
-        // **音声が外に出る状態は、録音中かどうかに関わらず常に示す。**
-        // 到達範囲が同じでもデータ種別が音声なら厳しい側へ振る。
-        // 「申告でアイコンを優しくしない」原則の裏返しで、緩める方向には使わない。
-        if usesCloudTranscription { return "antenna.radiowaves.left.and.right" }
         if phase.isListening { return "mic.fill" }
         return settings.privacy.allowNetwork ? "globe" : "mic"
     }
 
     var privacyHeadline: String {
         if !missingPermissions.isEmpty { return "権限が不足しています" }
-        // **音声を先に言う。** 3 系統のうち最も重いので、埋もれさせない。
-        if let audio = audioDestination {
-            return "音声 → \(audio.host)（この Mac の外へ出ます）"
-        }
         if !settings.privacy.allowNetwork { return "完全ローカル — 送信先なし" }
-        if !settings.refinement.enabled { return "音声はこの Mac から出ません" }
+        if !settings.refinement.enabled { return "完全ローカル — 送信先なし" }
         let host = URL(string: settings.refinement.openaiCompatible.baseURL)?.host ?? "?"
         let op = settings.refinement.openaiCompatible.operatorKind == "self-hosted"
             ? "自社運用と設定" : "外部サービス"
-        return "音声は出ません / 整形テキスト → \(host)（\(op)）"
+        return "整形テキスト → \(host)（\(op)）"
     }
 }
 

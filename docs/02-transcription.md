@@ -546,106 +546,64 @@ status: installed     ← 予約した瞬間に変わる
 セットアップが毎回ダウンロードを促すことになる（実際にそうなっていた）。
 `readiness()` の中で `status` を見る前に予約すること。予約は冪等で、同時 5 ロケールまで。
 
-## クラウド STT（実装済み・オプトイン）
+## step 2: クラウド STT を載せる
 
-`gpt-live-transcribe` を OpenAI Realtime 互換の WebSocket で使う。
-**プロトコルは変更していない。** `TranscriptionProvider` / `TranscriptionSession` に
-そのまま載っている。
+プロトコルは変更不要。クラウドプロバイダは:
 
-### 実測で確定したこと（社内 Azure / プロキシ経由）
+1. `inputFormat` に自分の望む形式を返す (取り込み側がそれに合わせる)
+2. `append` でチャンクを溜める (`BufferingTranscriptionSession`)
+3. `finish()` で WAV/FLAC/Opus にまとめて `EgressGate` 経由で POST
+4. `.finalized` を 1 つと `.ended` を emit
 
-| 項目 | 結果 |
-|---|---|
-| `?intent=transcription` | **必須**。付けない URL は 101 が返らない |
-| `rate` | **24000 固定**。16000 は拒否される: "PCM input rate must be 24000, or 16000 for MAI transcription." |
-| ハンドシェイク | **1,089 ms**（`session.created` → `session.update` → `session.updated`） |
-| 社内 PAC 経由の `wss` | 通る。squid は CONNECT を通し Upgrade も剥がさない |
-| PAC のスキーム分岐 | この環境では `wss` と `https` で同じ答え。写像は保険として残す |
-| 認証 | Azure は `api-key: <生キー>`、OpenAI は `Authorization: Bearer` |
+`descriptor.supportsPartialResults = false` なので HUD は波形だけ出す。
+`descriptor.egress` が `.fixedHosts(["api.openai.com"])` などになり、
+`PrivacyPosture` が `.cloud` に変わって**メニューバーのアイコンが変わる** ([06](06-privacy.md))。
 
-### セッション設定
+step 2 で初めて**音声が Mac の外に出る**。そのタイミングで、
+`VoinpNet` を別プロセス (XPC) に切り出し、音声を扱うプロセスからネットワーク権限を
+剥奪することを検討する。いまはやらない ([06](06-privacy.md) の D.3)。
 
-```json
-{ "type": "session.update",
-  "session": { "type": "transcription",
-    "audio": { "input": {
-      "format": { "type": "audio/pcm", "rate": 24000 },
-      "transcription": {
-        "model": "gpt-live-transcribe",
-        "languages": ["ja", "en"],
-        "keywords": ["kintone", "Garoon"],
-        "prompt": "", "delay": "low" },
-      "noise_reduction": { "type": "near_field" },
-      "turn_detection": null } } } }
-```
+## クラウド STT は入れない（実装して、剥がした）
 
-- **`noise_reduction` は `transcription` の中ではない。** `audio.input` 直下。
-  位置を間違えると設定全体が拒否される
-- **`keywords` に `<` `>` を入れない。** 入ると `session.update` 全体が拒否される。
-  64 語まで、`prompt` は 1,000 文字まで
-- `turn_detection` は `null`。voinp はホットキーで区切るので、
-  サーバーにターンを切られると確定のタイミングが読めなくなる
-- **`languages` で複数言語ヒントを渡せる。** macOS の `SpeechAnalyzer` には無い機能で、
-  日英混在（「kintone の API で 401 が返る」）に効く
-- `keywords` は voinp の `termHints` がそのまま対応する
+一度 `gpt-live-transcribe`（OpenAI Realtime 互換）を実装し、
+macOS 標準と横に並べて比べたうえで**入れない判断をした**。
 
-### 勘所: `delta` は追記、`.partial` は置換
+### 実測（同じ台本・同じ音声・同条件）
 
-意味論が逆を向いている。
+台本: `kintone の API で 401 が返ってくるので、Authorization ヘッダを確認してください。`
 
-| | 意味 |
-|---|---|
-| Realtime の `delta` | **追記分** |
-| voinp の `.partial` | 直前を**丸ごと置換** |
+| | 結果 | 初出 | 確定 |
+|---|---|---|---|
+| macOS SpeechAnalyzer | 均等のAPIで**401**が返ってくるので、オーソリゼーションヘッダーを確認してください | 3,280 ms | **127 ms** |
+| gpt-live-transcribe (Azure) | 均等のAPIで**404**が返ってくるのでオーソリゼーションヘッダーを確認してください。 | 3,880 ms | 1,383 ms |
 
-素通しすると HUD に最後の断片しか出ない。`RealtimeTranscriptAssembler` が
-累積してから置換として出す。併せて:
+- **クラウドが速くも正確でもなかった。** 確定は 10 倍遅く、数字も落とした
+- **固有名詞の弱さは両方に共通**（`kintone` → 「均等の」、`Authorization` → 「オーソリゼーション」）
 
-- 同じ `item_id` の `completed` は 1 度しか確定させない（文が二重に入る）
-- **空の `completed` で暫定を殺さない。** `TranscriptBuffer` は `.finalized` を受けると
-  `volatileTail` を捨てるので、空で出すと `bestEffortText` が空になる
-- `audioRange` は付けない（Realtime は音声区間を返さない）。そのぶん
-  `TranscriptBuffer` の重複排除が効かないので、重複排除はアセンブラが担保する。
-  **Apple 版と責任分担が逆**になる
+つまり「クラウドに出せば精度が上がる」ではなかった。
+そして弱点が共通なら、効くのは**辞書**であってエンジンの差ではない。
 
-### 勘所: 接続を待つとマイクが閉じている
+→ macOS 標準 + 用語辞書を育てる方向にする。旗印も降ろさずに済む。
 
-`DictationCoordinator.startCapture` は `startSession()` が返るまでマイクを開かない。
-ハンドシェイクは実測 1,089 ms なので、そこで待つと**その 1 秒は発話が物理的に存在しない**。
+### この比較で学んだこと（次に比べるときのために）
 
-→ `startSession()` は接続を待たずに返す。接続中の音声は `PrerollBuffer`（上限 15 秒）へ
-積み、`session.updated` を受けた瞬間に順番に吐き出す。
-`append()` も待たない（`pumpTask` が直列なので、待つと `AudioCapture` が溢れて中抜けする）。
+- **マイクは 1 回だけ開き、同じ PCM を配る。** エンジンごとに録り直すと
+  話し方の違いが結果の違いに化ける
+- **接続を待ってから録音しない。** クラウドのハンドシェイクは実測で約 1 秒。
+  待つと冒頭の語が全エンジンから消える（最初はこれで「kintone の」が
+  両方から欠け、比較として読めない結果が出た）
+- **レートは各エンジンの要求へ落とす。** 16kHz へ水増しすると、された側が不利
+- **暫定結果の意味がベンダーごとに違う。** OpenAI は追記分、Gemini は全文。
+  取り違えると片方は断片しか出ず、もう片方は同じ文字が二重に並び、
+  **どちらも「精度が悪い」ように見えて比較そのものが嘘になる**
 
-### 退避
+### 実装は git 履歴にある
 
-`FallbackTranscriptionProvider` が吸収する。`DictationCoordinator` と
-`SessionMachine` は**無変更**。
+`RealtimeTranscriptionProvider` 一式、5 条件の同意フロー、
+32 通りのゴールデンテスト、比較ツール（`stt-compare`）は
+`feat/gated-websocket-and-probe` と `feat/stt-compare` にある。
+再び必要になったらそこから取れる。
 
-| 状況 | 動作 |
-|---|---|
-| 開始前に使えない | 最初からローカル。ユーザーには見えない |
-| 確定 0 件で切れた | ローカルを起こし、**保持した音声をリプレイ**。HUD に退避を表示 |
-| 確定が出た後に切れた | 差し替えない（音声区間が特定できず文が二重になる） |
-
-**`events` をエラーで終わらせない。** `DictationCoordinator.resultTask` は `catch` で
-`.failed` を dispatch し、`SessionMachine` が `abortEverything` に落ちて
-それまでの認識結果を全部捨てる。どんな失敗も「溜まった分を確定して正常終了」に変換する。
-
-退避時は 24kHz の音声を 16kHz の Apple エンジンへ流すので、
-`AppleSpeechProvider` が `chunk.format` を見て変換する。
-変換しないと**無言で 1.5 倍速**になり、エラーも出ないまま認識だけが壊れる。
-
-### ローカルや社内 GPU に向けることもできる
-
-接続先を `ws://127.0.0.1:8899/v1/realtime` のような自前のサーバに向ければ、
-到達範囲は `loopback` のままで `audioLeavesMachine` は false になる。
-社内 GPU に Realtime 互換サーバを立てる構成なら `privateNetwork` になる。
-
-### readiness で通信しない
-
-`readiness` は `startCapture` の先頭から毎回呼ばれる＝**ホットキーを押すたびに走る**。
-往復を入れると、会社の外にいるときに押すたびタイムアウトを待つことになる。
-監査ログに「ユーザーが何もしていないのに出た通信」が溜まるのも避けたい。
-見るのはローカルで分かることだけ（URL の形・モデル名・鍵の有無）。
-疎通確認は設定画面の接続テストで行う。
+**再開するときは旗印の扱いから設計し直すこと。**
+`scripts/verify-privacy.sh` の検査 6 が、`.transcribe` を
+許可集合に足す経路を止めている。

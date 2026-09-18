@@ -15,6 +15,18 @@ let package = Package(
         .executable(name: "voinp", targets: ["voinp"]),
         .executable(name: "voinp-offline", targets: ["voinp-offline"]),
         .executable(name: "voinp-tools", targets: ["voinp-tools"]),
+
+        // ── ライブラリとしての公開 ───────────────────────────────
+        // 認識エンジンの比較ツールなど、別パッケージから部品を使うため。
+        //
+        // **公開しても依存の向きは変わらない。** VoinpCore と VoinpEngine は
+        // 引き続き VoinpNet を知らず、`scripts/verify-privacy.sh` の検査 3 が
+        // それを見ている。オフライン版の保証にも影響しない
+        // （検査 4 は voinp-offline のバイナリを見ているため）。
+        .library(name: "VoinpCore", targets: ["VoinpCore"]),
+        .library(name: "VoinpEngine", targets: ["VoinpEngine"]),
+        .library(name: "VoinpNet", targets: ["VoinpNet"]),
+        .library(name: "VoinpProviders", targets: ["VoinpProviders"]),
     ],
     targets: [
         // ── ネットワークに依存しない層 ──────────────────────────────

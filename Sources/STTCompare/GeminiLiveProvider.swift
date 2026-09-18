@@ -14,11 +14,18 @@ public struct GeminiLiveProvider: TranscriptionProvider {
 
     private let config: GeminiLiveConfig
     private let endpoint: URL
+    private let injection: SecretInjection?
     private let gate: EgressGate
 
-    public init(config: GeminiLiveConfig, endpoint: URL, gate: EgressGate) {
+    /// - Parameter injection: API キーの参照。
+    ///   **URL のクエリに載せない。** ドキュメントは `?key=` を示しているが、
+    ///   載せると「秘密はゲートの中で初めて値になる」性質が崩れ、
+    ///   呼び出し側が鍵を String で持つことになる。ヘッダで渡す。
+    public init(config: GeminiLiveConfig, endpoint: URL,
+                injection: SecretInjection?, gate: EgressGate) {
         self.config = config
         self.endpoint = endpoint
+        self.injection = injection
         self.gate = gate
     }
 
@@ -47,6 +54,7 @@ public struct GeminiLiveProvider: TranscriptionProvider {
 
         let egress = EgressRequest(
             purpose: .transcribe, providerID: identifier, url: endpoint,
+            secretRefs: injection.map { ["x-goog-api-key": $0] } ?? [:],
             timeout: .seconds(10), carriesUserContent: true)
         let gate = self.gate
 

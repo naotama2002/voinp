@@ -1,0 +1,165 @@
+import Foundation
+import Testing
+import VoinpCore
+@testable import STTCompare
+
+/// 台本どおりに動くエンジン。
+struct StubProvider: TranscriptionProvider {
+    let identifier: String
+    let session: StubSession
+    let failsToStart: Bool
+
+    init(identifier: String, session: StubSession, failsToStart: Bool = false) {
+        self.identifier = identifier
+        self.session = session
+        self.failsToStart = failsToStart
+    }
+
+    func readiness(for request: TranscriptionRequest) async -> Readiness { .ready }
+    func downloadModel(for locale: Locale,
+                       progress: @Sendable @escaping (Double) -> Void) async throws {}
+    func preferredFormat(for request: TranscriptionRequest) async -> AudioFormatDescription {
+        AudioFormatDescription(sampleRate: 16_000, channelCount: 1, isInt16: true)
+    }
+    func startSession(_ request: TranscriptionRequest) async throws -> any TranscriptionSession {
+        struct Boom: Error {}
+        if failsToStart { throw Boom() }
+        return session
+    }
+}
+
+actor StubSession: TranscriptionSession {
+    nonisolated let events: AsyncThrowingStream<TranscriptionEvent, any Error>
+    private let continuation: AsyncThrowingStream<TranscriptionEvent, any Error>.Continuation
+    private(set) var receivedChunks = 0
+
+    init() {
+        let parts = AsyncThrowingStream<TranscriptionEvent, any Error>.makeStream()
+        events = parts.stream
+        continuation = parts.continuation
+    }
+
+    func append(_ chunk: AudioChunk) async throws { receivedChunks += 1 }
+    func finish() async throws {}
+    func cancel() async { continuation.finish() }
+
+    func emit(_ event: TranscriptionEvent) { continuation.yield(event) }
+    func endStream() { continuation.finish() }
+}
+
+@Suite("比較の進行")
+struct ComparisonRunTests {
+
+    private func engine(_ id: String, _ session: StubSession,
+                        failsToStart: Bool = false) -> Engine {
+        Engine(id: id, displayName: id,
+               format: AudioFormatDescription(sampleRate: 16_000, channelCount: 1,
+                                              isInt16: true),
+               makeProvider: {
+                   StubProvider(identifier: id, session: session, failsToStart: failsToStart)
+               })
+    }
+
+    private func request() -> TranscriptionRequest {
+        TranscriptionRequest(locale: Locale(identifier: "ja-JP"))
+    }
+
+    /// **1 つ落ちても比較を続けること。**
+    /// 全部止まると何も分からない。落ちたエンジンだけ失敗と出す。
+    @Test("接続に失敗したエンジンがあっても他は動く")
+    func oneFailureDoesNotStopOthers() async {
+        let good = StubSession()
+        let run = ComparisonRun(engines: [
+            engine("ok", good),
+            engine("broken", StubSession(), failsToStart: true),
+        ])
+        await run.start(request: request())
+
+        let results = await run.snapshot
+        #expect(results.first { $0.id == "ok" }?.state == .listening)
+        if case .failed = results.first(where: { $0.id == "broken" })?.state {} else {
+            Issue.record("失敗したエンジンが .failed になること")
+        }
+    }
+
+    /// 列の並びが安定していること。**毎回入れ替わると比べられない。**
+    @Test("結果の並び順は登録順で固定")
+    func orderIsStable() async {
+        let run = ComparisonRun(engines: [
+            engine("apple", StubSession()),
+            engine("openai", StubSession()),
+            engine("gemini", StubSession()),
+        ])
+        await run.start(request: request())
+        #expect(await run.snapshot.map(\.id) == ["apple", "openai", "gemini"])
+    }
+
+    /// 暫定は置換、確定は追記。voinp の `TranscriptBuffer` と同じ規約。
+    @Test("暫定は置き換わり、確定は積み上がる")
+    func partialReplacesAndFinalAccumulates() async throws {
+        let session = StubSession()
+        let run = ComparisonRun(engines: [engine("e", session)])
+        await run.start(request: request())
+
+        await session.emit(.partial("今日は"))
+        try await Task.sleep(for: .milliseconds(40))
+        #expect(await run.snapshot.first?.text == "今日は")
+
+        await session.emit(.partial("今日はいい天気"))
+        try await Task.sleep(for: .milliseconds(40))
+        #expect(await run.snapshot.first?.text == "今日はいい天気",
+                "暫定は置き換わること（追記だと二重になる）")
+
+        await session.emit(.finalized(TranscriptSegment(text: "今日はいい天気です。")))
+        try await Task.sleep(for: .milliseconds(40))
+        let result = await run.snapshot.first
+        #expect(result?.committed == "今日はいい天気です。")
+        #expect(result?.volatile == "", "確定したら暫定は消えること")
+    }
+
+    /// **レイテンシは共通の基準から測ること。**
+    /// エンジンごとに別の基準で測ると比較にならない。
+    @Test("最初の文字までの時間を記録する")
+    func recordsFirstTextLatency() async throws {
+        let session = StubSession()
+        let run = ComparisonRun(engines: [engine("e", session)])
+        await run.start(request: request())
+
+        try await Task.sleep(for: .milliseconds(60))
+        await session.emit(.partial("あ"))
+        try await Task.sleep(for: .milliseconds(40))
+
+        let ms = await run.snapshot.first?.firstTextMs
+        #expect(ms != nil, "記録されること")
+        #expect((ms ?? 0) >= 50, "録音開始からの経過であること。実際は \(ms ?? -1) ms")
+    }
+
+    /// 最初の 1 回だけ記録する。後続の結果で上書きしない。
+    @Test("初出の時刻は最初の 1 回だけ")
+    func firstTextIsRecordedOnce() async throws {
+        let session = StubSession()
+        let run = ComparisonRun(engines: [engine("e", session)])
+        await run.start(request: request())
+
+        await session.emit(.partial("あ"))
+        try await Task.sleep(for: .milliseconds(30))
+        let first = await run.snapshot.first?.firstTextMs
+
+        try await Task.sleep(for: .milliseconds(60))
+        await session.emit(.partial("あい"))
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(await run.snapshot.first?.firstTextMs == first, "上書きしないこと")
+    }
+
+    /// 空の結果では時刻を記録しない。**出ていないのに速いことにしない。**
+    @Test("空の暫定では初出を記録しない")
+    func emptyTextDoesNotCount() async throws {
+        let session = StubSession()
+        let run = ComparisonRun(engines: [engine("e", session)])
+        await run.start(request: request())
+
+        await session.emit(.partial(""))
+        try await Task.sleep(for: .milliseconds(40))
+        #expect(await run.snapshot.first?.firstTextMs == nil)
+    }
+}

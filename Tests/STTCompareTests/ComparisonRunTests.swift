@@ -163,3 +163,46 @@ struct ComparisonRunTests {
         #expect(await run.snapshot.first?.firstTextMs == nil)
     }
 }
+
+/// 設定に書かれた接続先を WebSocket の URL にする部分。
+///
+/// **本体の設定は `https` のことも `wss` のこともある。**
+/// 比較ツールのために書き直させない。
+@Suite("接続先の URL の組み立て")
+struct RealtimeURLTests {
+
+    @Test("https を wss に変え、realtime とクエリを足す")
+    func fromHTTPSBase() {
+        let url = realtimeURL(from: "https://x.openai.azure.com/openai/v1")
+        #expect(url?.absoluteString
+                == "wss://x.openai.azure.com/openai/v1/realtime?intent=transcription")
+    }
+
+    /// 既に整った URL を壊さない。本体でクラウドを設定済みならこの形。
+    @Test("既に wss と realtime を含む URL はそのまま")
+    func alreadyComplete() {
+        let complete = "wss://x.openai.azure.com/openai/v1/realtime?intent=transcription"
+        #expect(realtimeURL(from: complete)?.absoluteString == complete)
+    }
+
+    /// **`?intent=transcription` は Azure でも必須。**
+    /// 付けない URL は 101 が返らない（実測）。
+    @Test("realtime だけあってクエリが無ければ足す")
+    func addsIntentQuery() {
+        let url = realtimeURL(from: "wss://x.openai.azure.com/openai/v1/realtime")
+        #expect(url?.absoluteString.contains("intent=transcription") == true)
+    }
+
+    @Test("末尾のスラッシュを落とす")
+    func trimsTrailingSlash() {
+        let url = realtimeURL(from: "https://x.openai.azure.com/openai/v1/")
+        #expect(url?.absoluteString.contains("/v1/realtime") == true)
+        #expect(url?.absoluteString.contains("//realtime") == false)
+    }
+
+    @Test("空なら nil")
+    func emptyIsNil() {
+        #expect(realtimeURL(from: "") == nil)
+        #expect(realtimeURL(from: "   ") == nil)
+    }
+}

@@ -72,7 +72,13 @@ final class CompareModel {
             termHints: [],                 // 比較では全エンジン同条件にする
             wantsPartialResults: true,
             punctuation: true)
-        await run.start(request: request)
+
+        // **接続を待たずにマイクを開く。**
+        // クラウドのハンドシェイクは実測で約 1 秒かかる。待ってから録音すると
+        // その 1 秒は音声が存在せず、**冒頭の語が全エンジンから消える**
+        // （「kintone の API で…」が「API で…」になった）。
+        // 接続中に届いた音声は preroll に溜め、繋がった順に流し込む。
+        let connecting = Task { await run.start(request: request) }
 
         do {
             // **マイクは 1 回だけ開く。** エンジンごとに録り直すと、
@@ -95,8 +101,11 @@ final class CompareModel {
                     }
                 }
             }
+            // 接続の完了はここで待つ。録音はもう始まっている。
+            await connecting.value
         } catch {
             note = "マイクを開けません: \((error as NSError).localizedDescription)"
+            connecting.cancel()
             await run.cancel()
             self.run = nil
         }

@@ -234,3 +234,95 @@ struct RealtimeURLTests {
         #expect(url?.path == "/openai/v1/realtime")
     }
 }
+
+/// 接続が完了する前に届いた音声の扱い。
+///
+/// **クラウドのハンドシェイクは実測で約 1 秒。**
+/// その間の音声を捨てると、冒頭の語が全エンジンから消える。
+/// 実際に「kintone の API で…」が「API で…」になった。
+@Suite("接続前の音声")
+struct PendingAudioTests {
+
+    private func chunk(_ byte: UInt8) -> AudioChunk {
+        AudioChunk(format: AudioFormatDescription(sampleRate: 16_000, channelCount: 1,
+                                                  isInt16: true),
+                   samples: Data([byte, 0]))
+    }
+
+    /// **本命。** 接続前に届いた分が、繋がった後で全部届くこと。
+    @Test("接続前に届いた音声も後から届く")
+    func pendingAudioIsDelivered() async throws {
+        let session = StubSession()
+        let gate = ConnectGate()
+        let engine = Engine(
+            id: "slow", displayName: "slow",
+            format: AudioFormatDescription(sampleRate: 16_000, channelCount: 1, isInt16: true),
+            makeProvider: { GatedProvider(session: session, gate: gate) })
+
+        let run = ComparisonRun(engines: [engine])
+        let starting = Task { await run.start(request: TranscriptionRequest(
+            locale: Locale(identifier: "ja-JP"))) }
+
+        // 接続が終わる前に音声を送る
+        try await Task.sleep(for: .milliseconds(30))
+        for i in 0..<5 { await run.append(chunk(UInt8(i)), for: "slow") }
+        #expect(await session.receivedChunks == 0, "まだ届いていないこと")
+
+        // 接続を完了させる
+        await gate.open()
+        await starting.value
+        try await Task.sleep(for: .milliseconds(60))
+
+        #expect(await session.receivedChunks == 5, "溜めた 5 つが届くこと")
+    }
+
+    /// 接続に失敗したエンジンの分は捨てる（送り先が無い）。
+    @Test("失敗したエンジンの溜め分は保持しない")
+    func failedEngineDropsPending() async throws {
+        let engine = Engine(
+            id: "broken", displayName: "broken",
+            format: AudioFormatDescription(sampleRate: 16_000, channelCount: 1, isInt16: true),
+            makeProvider: { StubProvider(identifier: "broken", session: StubSession(),
+                                         failsToStart: true) })
+        let run = ComparisonRun(engines: [engine])
+        await run.start(request: TranscriptionRequest(locale: Locale(identifier: "ja-JP")))
+        await run.append(chunk(1), for: "broken")   // 落ちないこと
+        if case .failed = await run.snapshot.first?.state {} else {
+            Issue.record("失敗として記録されること")
+        }
+    }
+}
+
+/// 接続を任意のタイミングまで待たせるためのゲート。
+actor ConnectGate {
+    private var waiter: CheckedContinuation<Void, Never>?
+    private var opened = false
+
+    func wait() async {
+        if opened { return }
+        await withCheckedContinuation { waiter = $0 }
+    }
+
+    func open() {
+        opened = true
+        waiter?.resume()
+        waiter = nil
+    }
+}
+
+struct GatedProvider: TranscriptionProvider {
+    let identifier = "gated"
+    let session: StubSession
+    let gate: ConnectGate
+
+    func readiness(for request: TranscriptionRequest) async -> Readiness { .ready }
+    func downloadModel(for locale: Locale,
+                       progress: @Sendable @escaping (Double) -> Void) async throws {}
+    func preferredFormat(for request: TranscriptionRequest) async -> AudioFormatDescription {
+        AudioFormatDescription(sampleRate: 16_000, channelCount: 1, isInt16: true)
+    }
+    func startSession(_ request: TranscriptionRequest) async throws -> any TranscriptionSession {
+        await gate.wait()
+        return session
+    }
+}

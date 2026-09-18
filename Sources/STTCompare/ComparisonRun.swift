@@ -83,6 +83,12 @@ public actor ComparisonRun {
     private var order: [String] = []
 
     private var sessions: [String: any TranscriptionSession] = [:]
+    /// セッションが繋がる前に届いた音声。**捨てない。**
+    /// クラウドのハンドシェイクは実測で約 1 秒。捨てると冒頭の語が消える
+    /// （「kintone の API で…」が「API で…」になった）。
+    /// 上限 150 チャンク ≒ 15 秒で、超えたら古いものから落とす。
+    private var pending: [String: [AudioChunk]] = [:]
+    private let pendingLimit = 150
     private var pumps: [Task<Void, Never>] = []
     private var startedAt: ContinuousClock.Instant?
     private var stoppedAt: ContinuousClock.Instant?
@@ -122,8 +128,11 @@ public actor ComparisonRun {
                     sessions[id] = session
                     update(id) { $0.state = .listening }
                     consume(session, for: id)
+                    // 接続前に届いていた音声を流し込む。
+                    await drainPending(for: id, into: session)
                 case .failure(let error):
                     update(id) { $0.state = .failed(Self.describe(error)) }
+                    pending[id] = nil   // 送り先が無いので保持しない
                 }
             }
         }
@@ -133,8 +142,22 @@ public actor ComparisonRun {
     /// 取り込んだ音声を全エンジンへ配る。
     /// **待たない。** 1 つのエンジンが詰まっても他を止めない。
     public func append(_ chunk: AudioChunk, for engineID: String) async {
-        guard let session = sessions[engineID] else { return }
+        // まだ繋がっていないなら溜める。**捨てない。**
+        guard let session = sessions[engineID] else {
+            var queue = pending[engineID] ?? []
+            queue.append(chunk)
+            if queue.count > pendingLimit { queue.removeFirst(queue.count - pendingLimit) }
+            pending[engineID] = queue
+            return
+        }
         try? await session.append(chunk)
+    }
+
+    /// 繋がった時点で、溜めた分を順番に流し込む。
+    private func drainPending(for engineID: String,
+                              into session: any TranscriptionSession) async {
+        guard let queue = pending.removeValue(forKey: engineID), !queue.isEmpty else { return }
+        for chunk in queue { try? await session.append(chunk) }
     }
 
     public func stop() async {
@@ -153,6 +176,7 @@ public actor ComparisonRun {
         for session in sessions.values { await session.cancel() }
         for pump in pumps { pump.cancel() }
         sessions.removeAll()
+        pending.removeAll()
         continuation.finish()
     }
 

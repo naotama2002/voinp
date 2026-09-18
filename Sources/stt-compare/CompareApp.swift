@@ -18,21 +18,12 @@ import VoinpProviders
 //   STT_COMPARE_AZURE_KEY
 //   STT_COMPARE_GEMINI_KEY
 
-/// 鍵は値のまま持たず、口座名で参照する。voinp 本体と同じ扱い。
-struct EnvironmentCredentials: CredentialStore {
-    func read(_ ref: CredentialRef) throws -> String? {
-        ProcessInfo.processInfo.environment[ref.account]
-    }
-    func write(_ value: String, to ref: CredentialRef) throws {}
-    func delete(_ ref: CredentialRef) throws {}
-}
-
 /// クラウド用のゲート。**ホストを明示的に許可した分だけ通す。**
 nonisolated func makeGate(hosts: Set<String>) -> EgressGate {
     let snapshot = EgressPolicySnapshot(
         masterAllow: true, maxClass: .publicInternet,
         allowedHosts: hosts, allowedPurposes: [.transcribe], probeCandidate: nil)
-    return EgressGate(policy: { snapshot }, credentials: EnvironmentCredentials())
+    return EgressGate(policy: { snapshot }, credentials: CompareCredentials())
 }
 
 /// 比較対象を組み立てる。

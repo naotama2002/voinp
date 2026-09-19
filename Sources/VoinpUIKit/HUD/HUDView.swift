@@ -109,6 +109,9 @@ struct HUDView: View {
         case .listening: "録音中"
         case .finalizing: "認識中…"
         case .refining: "整形中…"
+        // 編集中は別ウィンドウが本文を出しており、HUD は隠れている。
+        case .editing: "編集中"
+        case .restoringFocus: "入力先に戻しています…"
         case .awaitingModifierRelease: "修飾キーを離してください"
         case .inserting: "挿入中…"
         case .installingModel(let p): "モデルを取得中… \(Int(p * 100))%"

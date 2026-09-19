@@ -44,6 +44,35 @@ public enum InsertionTargetResolver {
         }
     }
 
+    /// **編集ウィンドウで奪ったフォーカスを挿入先へ返す。**
+    ///
+    /// 編集面を出すと voinp が最前面になる。そのまま挿入へ進むと
+    /// `assertStillCurrent` が「挿入先が変わった」と見て中止するので、
+    /// 先にここを通して元アプリを前面へ戻す。
+    ///
+    /// **`activate()` の成否を信じない。** 戻り値は「要求を出せた」であって
+    /// 「前面になった」ではない。実際に最前面になるまで確認する。
+    /// 戻らなければ false を返し、呼び出し側がペーストボードへ退避する。
+    public static func restoreFocus(
+        to target: InsertionTarget,
+        timeout: Duration = .seconds(2)
+    ) async -> Bool {
+        guard let app = NSRunningApplication(processIdentifier: target.processIdentifier) else {
+            Log.insert.notice("フォーカスを戻せない: 挿入先のプロセスが終了している")
+            return false
+        }
+        app.activate()
+
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while ContinuousClock.now < deadline {
+            if NSWorkspace.shared.frontmostApplication?.processIdentifier
+                == target.processIdentifier { return true }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        Log.insert.notice("フォーカスを戻せない: \(target.bundleIdentifier ?? "?", privacy: .public) が前面にならない")
+        return false
+    }
+
     /// `IsSecureEventInputEnabled` は SDK のヘッダから消滅しているので使わない。
     /// AX の subrole を見るほうが精度も高い
     /// （「どこかのプロセスが secure input を主張している」ではなく

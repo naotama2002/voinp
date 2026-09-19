@@ -89,6 +89,15 @@ final class NonActivatingPanel: NSPanel {
 これで HUD はクリック (キャンセルボタン) を受け取れるが、キーフォーカスは決して取らない。
 純粋に表示だけなら `panel.ignoresMouseEvents = true` がさらに安全。
 
+#### 編集したくなったら: HUD を編集可能にしない
+
+挿入前に直したい、という要求はある（[08](08-editing-and-learning.md)）。
+**そのときも HUD のこの性質を条件分岐で覆さないこと。**
+編集は別ウィンドウ（`Sources/VoinpUIKit/Edit/`）で行い、確定したら
+挿入先を前面へ戻してから挿入する。
+覆すと、`InsertionTargetResolver.assertStillCurrent` から見て
+「挿入先が voinp 自身に変わった」ことになり、挿入が中止される。
+
 #### `sharingType = .none` の位置づけ — 保証ではない
 
 `NSWindowSharingNone` は SDK ヘッダで

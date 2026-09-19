@@ -7,12 +7,24 @@ public enum SessionPhase: Equatable, Sendable {
     case listening(TranscriptSnapshot)
     case finalizing
     case refining
+    /// 編集ウィンドウが開いている。**この間 voinp が最前面**で、HUD は隠す。
+    case editing(text: String)
+    /// 編集で奪ったフォーカスを挿入先へ返している最中。
+    case restoringFocus(text: String)
     /// PTT の修飾キーがまだ押されている。離れるまで挿入してはいけない。
     case awaitingModifierRelease(text: String)
     case inserting
     case failed(SessionError)
 
     public var isListening: Bool { if case .listening = self { true } else { false } }
+
+    /// voinp 自身がキーフォーカスを持っている段階。HUD を出すと二重表示になる。
+    public var isEditing: Bool {
+        switch self {
+        case .editing, .restoringFocus: true
+        default: false
+        }
+    }
 
     /// 新しいセッションを受け付けられるか。セッションは絶対に重ねない。
     public var acceptsNewSession: Bool {
@@ -59,6 +71,8 @@ extension SessionPhase {
         case .listening(let s): "listening(\(s.fullText.count)文字)"
         case .finalizing: "finalizing"
         case .refining: "refining"
+        case .editing(let t): "editing(\(t.count)文字)"
+        case .restoringFocus(let t): "restoringFocus(\(t.count)文字)"
         case .awaitingModifierRelease(let t): "awaitingModifierRelease(\(t.count)文字)"
         case .inserting: "inserting"
         case .failed(let e): "failed(\(e.logDescription))"

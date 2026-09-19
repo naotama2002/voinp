@@ -17,6 +17,9 @@ public struct RawKeyEvent: Equatable, Sendable {
 public enum SessionCommand: Equatable, Sendable {
     case start
     case stop
+    /// 止めて**挿入せず編集ウィンドウを開く**。
+    /// ホットキーに修飾キーを 1 つ足して離すと、これになる。
+    case stopAndEdit
     case cancel
 }
 
@@ -74,6 +77,16 @@ public struct HotkeyInterpreter: Sendable {
             : handleKeyCombo(e, at: now)
     }
 
+    /// 指定より多くの修飾キーが押されているか。**編集ウィンドウを開く合図**。
+    ///
+    /// **修飾キー単独の和音では使えない。** あちらは押下中に修飾キーが増えると
+    /// 「⌘⇧ のような通常のショートカットだった」と解釈して録音を取り消す作りで、
+    /// 合図と誤爆防止が同じ操作になってしまう。既定の `ctrl+opt+space` は
+    /// キー付きなので影響しない。
+    private func hasExtraModifiers(_ e: RawKeyEvent) -> Bool {
+        !e.modifiers.sideAgnostic.subtracting(combo.modifiers.sideAgnostic).isEmpty
+    }
+
     // MARK: - 通常のキー + 修飾キー
 
     private mutating func handleKeyCombo(_ e: RawKeyEvent, at now: ContinuousClock.Instant) -> Decision {
@@ -86,10 +99,10 @@ public struct HotkeyInterpreter: Sendable {
         switch e.kind {
         case .keyDown:
             guard modsMatch else { return .ignore }
-            return press(at: now)
+            return press(at: now, edit: hasExtraModifiers(e))
         case .keyUp:
             guard pressedAt != nil else { return .ignore }
-            return release(at: now)
+            return release(at: now, edit: hasExtraModifiers(e))
         case .flagsChanged:
             return .ignore
         }
@@ -113,7 +126,7 @@ public struct HotkeyInterpreter: Sendable {
         if nowHeld {
             let newExtra = e.modifiers.subtracting(target).subtracting(peakModifiers)
             peakModifiers.formUnion(e.modifiers)
-            if pressedAt == nil { return press(at: now) }
+            if pressedAt == nil { return press(at: now, edit: false) }
 
             // 押下後に別の修飾キーが加わった → これは ⌘⇧ のような通常のショートカットで、
             // 我々のホットキーではなかった。開始済みの録音を取り消す。
@@ -134,13 +147,13 @@ public struct HotkeyInterpreter: Sendable {
                 pressedAt = nil
                 return .ignore
             }
-            return release(at: now)
+            return release(at: now, edit: false)
         }
     }
 
     // MARK: - 押下 / 解放の共通ロジック
 
-    private mutating func press(at now: ContinuousClock.Instant) -> Decision {
+    private mutating func press(at now: ContinuousClock.Instant, edit: Bool) -> Decision {
         pressedAt = now
 
         if combo.requiresDoubleTap {
@@ -153,16 +166,16 @@ public struct HotkeyInterpreter: Sendable {
         case .hold:
             return startRecording()
         case .toggle:
-            return isRecording ? stopRecording() : startRecording()
+            return isRecording ? stopRecording(edit: edit) : startRecording()
         case .hybrid:
             // 押下時点では hold か toggle か判らない。録音は即開始し、
             // 解放時の経過時間で「離したら止める」か「latch する」かを決める。
-            if isRecording && latchedToggle { return stopRecording() }
+            if isRecording && latchedToggle { return stopRecording(edit: edit) }
             return startRecording()
         }
     }
 
-    private mutating func release(at now: ContinuousClock.Instant) -> Decision {
+    private mutating func release(at now: ContinuousClock.Instant, edit: Bool) -> Decision {
         defer { pressedAt = nil }
         guard let down = pressedAt else { return .ignore }
         let held = now - down
@@ -174,12 +187,12 @@ public struct HotkeyInterpreter: Sendable {
 
         switch behavior {
         case .hold:
-            return isRecording ? stopRecording() : Decision(suppress: true, command: nil)
+            return isRecording ? stopRecording(edit: edit) : Decision(suppress: true, command: nil)
         case .toggle:
             return Decision(suppress: true, command: nil)   // 解放では何もしない
         case .hybrid:
             if held >= holdThreshold {
-                return isRecording ? stopRecording() : Decision(suppress: true, command: nil)
+                return isRecording ? stopRecording(edit: edit) : Decision(suppress: true, command: nil)
             }
             // 短タップ → トグルに latch。次のタップで止まる。
             latchedToggle = true
@@ -193,10 +206,10 @@ public struct HotkeyInterpreter: Sendable {
         return Decision(suppress: true, command: .start)
     }
 
-    private mutating func stopRecording() -> Decision {
+    private mutating func stopRecording(edit: Bool) -> Decision {
         isRecording = false
         latchedToggle = false
-        return Decision(suppress: true, command: .stop)
+        return Decision(suppress: true, command: edit ? .stopAndEdit : .stop)
     }
 
     /// セッションが外部要因（Esc、エラー）で終わったときに状態を戻す。

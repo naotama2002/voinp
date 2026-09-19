@@ -26,6 +26,10 @@ public struct SessionMachine: Sendable {
     /// buffer.finalText だと、校正で変わった内容や
     /// 暫定分しか無かった場合を取りこぼす（空文字を貼ってしまう）。
     private var pendingText: String?
+    /// この録音を止めたとき、挿入ではなく編集ウィンドウへ回すか。
+    /// **`stopRequested` の時点で決まる。** 認識が終わってから聞き直さない
+    /// （猶予を入れると全員が毎回遅くなる）。
+    private var editAfterFinalize = false
 
     public init(limits: Limits = Limits()) { self.limits = limits }
 
@@ -76,11 +80,12 @@ public struct SessionMachine: Sendable {
             phase = .listening(buffer.snapshot())
             return []
 
-        case (.listening, .stopRequested), (.arming, .stopRequested):
+        case (.listening, .stopRequested(let edit)), (.arming, .stopRequested(let edit)):
             // 素早いタップ。短すぎる録音は空挿入を防ぐためキャンセル扱い。
             if let started = recordingStarted, now - started < limits.minRecording {
                 return abort(reason: .tooShort)
             }
+            editAfterFinalize = edit
             phase = .finalizing
             return [.stopCaptureAndFinalize, .play(.stop)]
 
@@ -101,6 +106,45 @@ public struct SessionMachine: Sendable {
         // ── 校正 ──────────────────────────────────────────────
         // 校正は失敗しても生原稿が入ってくる。ここで分岐は要らない。
         case (.refining, .refinementFinished(let text)):
+            guard editAfterFinalize else {
+                phase = .awaitingModifierRelease(text: text)
+                return [.waitForModifierRelease(text)]
+            }
+            phase = .editing(text: text)
+            return [.hideHUD, .presentEditor(text)]
+
+        // ── 編集ウィンドウ ────────────────────────────────────
+        //
+        // ここだけ voinp がキーフォーカスを持つ。つまり
+        // `InsertionTargetResolver.assertStillCurrent` から見ると
+        // **挿入先が voinp 自身に変わって見える**。だから編集の直後に挿入せず、
+        // 先に元アプリを前面へ戻す段（`restoringFocus`）を必ず挟む。
+        case (.editing, .editApplied(let text)):
+            // 全部消して確定した＝取りやめ。空文字を貼らない。
+            guard !text.isEmpty else {
+                phase = .idle
+                return [.dismissEditor, .hideHUD, .play(.cancel)]
+            }
+            guard let t = target else { return abort(reason: .modifiersStuck) }
+            phase = .restoringFocus(text: text)
+            return [.dismissEditor, .restoreFocus(t)]
+
+        case (.editing, .editCancelled):
+            phase = .idle
+            return [.dismissEditor, .abortEverything, .hideHUD, .play(.cancel)]
+
+        case (.editing, .cancelRequested), (.restoringFocus, .cancelRequested):
+            phase = .idle
+            return [.dismissEditor, .abortEverything, .hideHUD, .play(.cancel)]
+
+        // 編集した本文は取り戻せない。失敗してもペーストボードには必ず残す。
+        case (.editing(let text), .failed(let e)),
+             (.restoringFocus(let text), .failed(let e)):
+            phase = .failed(e)
+            return [.dismissEditor, .copyToPasteboardAsFallback(text), .play(.error),
+                    .scheduleDismiss(after: limits.failureDismiss)]
+
+        case (.restoringFocus(let text), .focusRestored):
             phase = .awaitingModifierRelease(text: text)
             return [.waitForModifierRelease(text)]
 
@@ -120,6 +164,7 @@ public struct SessionMachine: Sendable {
 
         case (.inserting, .insertionFinished):
             pendingText = nil
+            editAfterFinalize = false
             phase = .idle
             return [.hideHUD]
 
@@ -155,6 +200,7 @@ public struct SessionMachine: Sendable {
 
     private mutating func abort(reason: SessionError?) -> [SessionAction] {
         let wasActive = phase != .idle
+        editAfterFinalize = false
         if let reason {
             phase = .failed(reason)
             return [.abortEverything, .play(.error),

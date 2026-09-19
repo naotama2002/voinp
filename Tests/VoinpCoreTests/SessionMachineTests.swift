@@ -23,7 +23,7 @@ struct SessionMachineTests {
         #expect(m.phase.isListening)
 
         let t1 = t0.advanced(by: .seconds(2))
-        _ = m.handle(.stopRequested, at: t1)
+        _ = m.handle(.stopRequested(), at: t1)
         #expect(m.phase == .finalizing)
 
         let actions = m.handle(.transcriptionFinished(text: "こんにちは"), at: t1)
@@ -52,7 +52,7 @@ struct SessionMachineTests {
     @Test("短すぎる録音はキャンセル扱いにして空挿入を防ぐ")
     func tooShortIsCancelled() {
         var (m, t0) = listening()
-        _ = m.handle(.stopRequested, at: t0.advanced(by: .milliseconds(100)))
+        _ = m.handle(.stopRequested(), at: t0.advanced(by: .milliseconds(100)))
         #expect(m.phase == .failed(.tooShort))
     }
 
@@ -69,7 +69,7 @@ struct SessionMachineTests {
     func emptyTranscriptSkipsEverything() {
         var (m, t0) = listening()
         let t1 = t0.advanced(by: .seconds(2))
-        _ = m.handle(.stopRequested, at: t1)
+        _ = m.handle(.stopRequested(), at: t1)
         let actions = m.handle(.transcriptionFinished(text: ""), at: t1)
         #expect(m.phase == .idle)
         #expect(!actions.contains { if case .refine = $0 { true } else { false } })
@@ -80,7 +80,7 @@ struct SessionMachineTests {
     func modifierTimeoutNeverInsertsWithWrongModifiers() {
         var (m, t0) = listening()
         let t1 = t0.advanced(by: .seconds(2))
-        _ = m.handle(.stopRequested, at: t1)
+        _ = m.handle(.stopRequested(), at: t1)
         _ = m.handle(.transcriptionFinished(text: "本文"), at: t1)
         _ = m.handle(.refinementFinished(text: "本文"), at: t1)
 
@@ -95,7 +95,7 @@ struct SessionMachineTests {
     func insertionFailureKeepsText() {
         var (m, t0) = listening()
         let t1 = t0.advanced(by: .seconds(2))
-        _ = m.handle(.stopRequested, at: t1)
+        _ = m.handle(.stopRequested(), at: t1)
         _ = m.handle(.transcriptionFinished(text: "本文"), at: t1)
         _ = m.handle(.refinementFinished(text: "本文"), at: t1)
         let actions = m.handle(.failed(.insertionFailed(.axSilentNoop)), at: t1)
@@ -157,7 +157,7 @@ struct SessionMachineFallbackTests {
         _ = m.handle(.startRequested(target: target), at: t)
         _ = m.handle(.audioStarted, at: t)
         let t1 = t.advanced(by: .seconds(2))
-        _ = m.handle(.stopRequested, at: t1)
+        _ = m.handle(.stopRequested(), at: t1)
         _ = m.handle(.transcriptionFinished(text: "生原稿"), at: t1)
         _ = m.handle(.refinementFinished(text: refined), at: t1)
         _ = m.handle(.modifiersReleased, at: t1)
@@ -205,7 +205,7 @@ struct SessionMachineDisplayTests {
         _ = m.handle(.transcript(.finalized(.init(text: "こんにちは。公共は雨ですよ。"))), at: t)
 
         let t1 = t.advanced(by: .seconds(2))
-        _ = m.handle(.stopRequested, at: t1)
+        _ = m.handle(.stopRequested(), at: t1)
         _ = m.handle(.transcriptionFinished(text: "こんにちは。公共は雨ですよ。"), at: t1)
         _ = m.handle(.refinementFinished(text: "こんにちは。公共は雨ですよ。"), at: t1)
         let actions = m.handle(.modifiersReleased, at: t1)

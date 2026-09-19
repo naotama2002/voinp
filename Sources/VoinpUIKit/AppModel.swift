@@ -43,6 +43,7 @@ public final class AppModel {
     private var coordinator: DictationCoordinator?
     private var hotkey: EventTapHotkeySource?
     private var hud: HUDPanelController?
+    private var editor: EditWindowController?
     private var tasks: [Task<Void, Never>] = []
     private var activationObserver: (any NSObjectProtocol)?
 
@@ -64,6 +65,18 @@ public final class AppModel {
 
     public func start() {
         hud = HUDPanelController(model: self)
+
+        // 編集ウィンドウ。**確定も破棄も coordinator へ返す。**
+        // ここで握り潰すと状態機械が `editing` のまま止まり、
+        // 次の音声入力が始まらなくなる。
+        let ed = EditWindowController()
+        ed.onApply = { [weak self] text in
+            Task { await self?.coordinator?.applyEdit(text) }
+        }
+        ed.onCancel = { [weak self] in
+            Task { await self?.coordinator?.cancelEdit() }
+        }
+        editor = ed
 
         // **設定値をここでコピーしない。**
         // start() 時点の値を閉じ込めると、設定を変えても再起動するまで
@@ -202,6 +215,15 @@ public final class AppModel {
                 .changed(recognized: recognized, refined: refined)
             }
             hud?.refreshLayout()
+        case .presentEditor(let text):
+            // **いま前面にいるのが挿入先。** 編集ウィンドウはまだ開いていないので、
+            // ここで名前を取れば「どこへ入るか」を正しく出せる。
+            let destination = NSWorkspace.shared.frontmostApplication?.localizedName
+            editor?.show(text: text, destination: destination)
+
+        case .dismissEditor:
+            editor?.dismiss()
+
         case .level(let l): level = l
         case .modelProgress(let p): modelProgress = p
         case .feedback(let f):
@@ -214,6 +236,9 @@ public final class AppModel {
     private func updateHUD(for phase: SessionPhase) {
         hudHideTask?.cancel()
         switch phase {
+        // 編集ウィンドウに同じ本文が出ている。HUD を重ねない。
+        case .editing, .restoringFocus:
+            hud?.hide()
         case .idle:
             // すぐ閉じると、何が入力されたのか確認する間がない。
             // 認識と挿入が食い違ったときに気づけるよう、少し残す。

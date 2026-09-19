@@ -17,6 +17,9 @@ public actor DictationCoordinator {
         /// LLM が何もしなかったのか、そもそも呼ばれなかったのか区別できない。
         case refinementResult(recognized: String, refined: String, ran: Bool, note: String?)
         case snapshot(TranscriptSnapshot)
+        /// 編集ウィンドウを開く。UI 側がキーフォーカスを取る**唯一の合図**。
+        case presentEditor(String)
+        case dismissEditor
         case level(Float)
         case modelProgress(Double)
         case feedback(Feedback)
@@ -119,10 +122,22 @@ public actor DictationCoordinator {
             let target = await MainActor.run { InsertionTargetResolver.current() }
             await dispatch(.startRequested(target: target))
         case .stop:
-            await dispatch(.stopRequested)
+            await dispatch(.stopRequested(thenEdit: false))
+        case .stopAndEdit:
+            await dispatch(.stopRequested(thenEdit: true))
         case .cancel:
             await dispatch(.cancelRequested)
         }
+    }
+
+    /// 編集ウィンドウで確定した。UI から呼ぶ。
+    public func applyEdit(_ text: String) async {
+        await dispatch(.editApplied(text: text))
+    }
+
+    /// 編集ウィンドウを破棄した。UI から呼ぶ。
+    public func cancelEdit() async {
+        await dispatch(.editCancelled)
     }
 
     // MARK: - 状態機械の駆動
@@ -159,7 +174,8 @@ public actor DictationCoordinator {
         // 同じ録音がまだ続いているときだけ効かせる。
         guard isCurrent(g), case .listening = machine.phase else { return }
         Log.session.notice("上限 \(self.settings.audio.maxRecordingSeconds, privacy: .public) 秒に達したので確定する")
-        await dispatch(.stopRequested)
+        // 自動確定では編集ウィンドウを開かない。ユーザーは画面を見ていない可能性がある。
+        await dispatch(.stopRequested(thenEdit: false))
     }
 
     /// 設定を状態機械の制約へ写す。
@@ -248,6 +264,23 @@ public actor DictationCoordinator {
                 recognized: text, refined: outcome.text, ran: outcome.ran, note: outcome.note))
             updateContinuation.yield(.finalText(outcome.text))
             await dispatch(.refinementFinished(text: outcome.text))
+
+        case .presentEditor(let text):
+            updateContinuation.yield(.presentEditor(text))
+
+        case .dismissEditor:
+            updateContinuation.yield(.dismissEditor)
+
+        case .restoreFocus(let target):
+            // 編集で voinp が最前面になっている。戻せないまま挿入へ進むと
+            // **自分の編集ウィンドウへ貼る**ので、戻るまで待つ。
+            guard await InsertionTargetResolver.restoreFocus(to: target) else {
+                await dispatch(.failed(.insertionFailed(
+                    .focusChangedDuringRecognition(expected: target.bundleIdentifier,
+                                                   actual: nil))))
+                return
+            }
+            await dispatch(.focusRestored)
 
         case .waitForModifierRelease(let text):
             await waitForModifierRelease(text: text)

@@ -35,6 +35,21 @@ struct Tools {
             return
         }
 
+        // 候補と信頼度を覗くモード
+        if CommandLine.arguments.contains("--probe-alternatives") {
+            let args = CommandLine.arguments
+            guard let i = args.firstIndex(of: "--probe-alternatives"), i + 1 < args.count else {
+                print("使い方: voinp-tools --probe-alternatives <音声ファイル> [--terms kintone,Garoon]")
+                exit(1)
+            }
+            let terms = args.firstIndex(of: "--terms")
+                .flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
+                .map { $0.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) } }
+                ?? []
+            await AlternativesProbe.run(path: args[i + 1], terms: terms)
+            return
+        }
+
         let provider = AppleSpeechProvider()
         var args = Array(CommandLine.arguments.dropFirst())
 

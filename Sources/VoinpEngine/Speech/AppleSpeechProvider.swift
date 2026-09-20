@@ -164,6 +164,10 @@ public struct AppleSpeechProvider: TranscriptionProvider {
 // MARK: - セッション
 
 actor AppleSpeechSession: TranscriptionSession {
+    /// `contextualStrings` に渡す語数の上限。**実測で効くと確かめた値**（上のコメント参照）。
+    /// フレームワーク側の制限ではなく、設定ファイルが壊れていたときの歯止め。
+    static let contextualStringsLimit = 1_000
+
     private let transcriber: DictationTranscriber
     private let analyzer: SpeechAnalyzer
     private let inputContinuation: AsyncStream<AnalyzerInput>.Continuation
@@ -198,10 +202,21 @@ actor AppleSpeechSession: TranscriptionSession {
         self.events = eventParts.stream
         self.eventContinuation = eventParts.continuation
 
-        // 社内用語辞書。長すぎるとむしろ精度が落ちるので上限を設ける。
+        // 社内用語辞書。
+        //
+        // **上限 100 は根拠のない値だった。** 2026-09-20 に実測して分かったこと:
+        //
+        // - 1000 語の辞書で、**1000 番目に置いた語もそのまま効いた**
+        //   （対照: 同じ語を抜くと出力から消える。検証が機能していることを確認済み）
+        // - 無関係な語を 1000 件入れても、**出力は 1 文字も変わらなかった**
+        //   （「多すぎると精度が落ちる」という以前の注記も、測った範囲では起きない）
+        //
+        // 上限そのものは残す。設定ファイルに何万語書かれても壊れないための歯止めで、
+        // 「ここまでは効くと確かめた値」として 1000 を置く。
         if !request.termHints.isEmpty {
             let ctx = AnalysisContext()
-            ctx.contextualStrings[.general] = Array(request.termHints.map(\.text).prefix(100))
+            ctx.contextualStrings[.general] =
+                Array(request.termHints.map(\.text).prefix(Self.contextualStringsLimit))
             try await analyzer.setContext(ctx)
         }
         try await analyzer.start(inputSequence: inputParts.stream)

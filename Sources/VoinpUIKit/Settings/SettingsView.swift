@@ -192,9 +192,12 @@ struct RecognitionSettings: View {
                         let terms = new.split(separator: "\n")
                             .map { $0.trimmingCharacters(in: .whitespaces) }
                             .filter { !$0.isEmpty }
-                        model.update { $0.transcription.termHints = Array(terms.prefix(100)) }
+                        model.update { $0.transcription.termHints = Array(terms.prefix(1_000)) }
                     }
-                Text("\(model.settings.transcription.termHints.count) 語（上限 100。多すぎるとかえって精度が落ちます）")
+                // 以前は「上限 100。多すぎるとかえって精度が落ちます」と書いていたが、
+                // 実測するとどちらも事実ではなかった（1000 番目の語も効き、
+                // 無関係な語を 1000 件入れても出力は変わらなかった）。
+                Text("\(model.settings.transcription.termHints.count) 語（上限 1,000）")
                     .font(.system(size: 10)).foregroundStyle(.tertiary)
                 // ASCII の語は自動ではローマ字読みになる（kintone → きんとね）。
                 // 読みを書いておくと、誤変換された箇所を読みから探せるようになる。

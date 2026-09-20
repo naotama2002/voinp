@@ -35,6 +35,52 @@ struct Tools {
             return
         }
 
+        // 認識テキストから辞書語の候補を作るモード。**通信しない。**
+        if CommandLine.arguments.contains("--match") {
+            let args = CommandLine.arguments
+            guard let i = args.firstIndex(of: "--match"), i + 1 < args.count else {
+                print("使い方: voinp-tools --match \"認識テキスト\" --terms kintone きんとーん,Garoon がるーん")
+                exit(1)
+            }
+            let terms = (args.firstIndex(of: "--terms")
+                .flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } ?? "")
+                .split(separator: ",").compactMap { TermHint.parse(String($0)) }
+            let text = args[i + 1]
+            print("入力: \(text)")
+            print("辞書: \(terms.map { "\($0.text)(\($0.comparableReading))" }.joined(separator: ", "))")
+            let matches = TermCandidateFinder.matches(in: text, terms: terms)
+            if matches.isEmpty { print("→ 候補なし") }
+            for m in matches {
+                let list = m.suggestions
+                    .map { String(format: "%@(%.2f)", $0.term, $0.similarity) }
+                    .joined(separator: " ")
+                print("  「\(m.recognized)」 読み=\(JapaneseReading.comparable(m.recognized)) → \(list)")
+            }
+            return
+        }
+
+        // 読みと類似度を確かめるモード。辞書の閾値を決めるのに使う。
+        if CommandLine.arguments.contains("--reading") {
+            let args = CommandLine.arguments
+            guard let i = args.firstIndex(of: "--reading") else { return }
+            let words = Array(args.dropFirst(i + 1)).filter { !$0.hasPrefix("--") }
+            for w in words {
+                print("\(w)\t読み=\(JapaneseReading.reading(of: w))\t均し=\(JapaneseReading.comparable(w))")
+            }
+            guard words.count >= 2 else { return }
+            print("\n組み合わせ（均した読みどうし）:")
+            for a in 0..<words.count {
+                for b in (a + 1)..<words.count {
+                    let x = JapaneseReading.comparable(words[a])
+                    let y = JapaneseReading.comparable(words[b])
+                    print(String(format: "  %@ / %@  距離=%d 類似=%.2f",
+                                 words[a], words[b], JapaneseReading.distance(x, y),
+                                 JapaneseReading.similarity(x, y)))
+                }
+            }
+            return
+        }
+
         // 候補と信頼度を覗くモード
         if CommandLine.arguments.contains("--probe-alternatives") {
             let args = CommandLine.arguments

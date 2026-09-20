@@ -60,7 +60,7 @@ struct SettingsPropagationTests {
 
         let request = TranscriptionRequest(
             locale: Locale(identifier: s.transcription.locale),
-            termHints: s.transcription.termHints.map(TermHint.init),
+            termHints: s.transcription.termHints.compactMap(TermHint.parse),
             wantsPartialResults: s.transcription.showPartialResults,
             punctuation: s.transcription.punctuation == "automatic")
 

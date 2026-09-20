@@ -326,7 +326,7 @@ public actor DictationCoordinator {
     private func startCapture(target: InsertionTarget) async {
         let request = TranscriptionRequest(
             locale: Locale(identifier: settings.transcription.locale),
-            termHints: settings.transcription.termHints.map(TermHint.init),
+            termHints: settings.transcription.termHints.compactMap(TermHint.parse),
             wantsPartialResults: settings.transcription.showPartialResults,
             punctuation: settings.transcription.punctuation == "automatic")
 

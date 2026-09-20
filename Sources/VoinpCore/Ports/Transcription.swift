@@ -21,7 +21,32 @@ public struct AudioChunk: Sendable {
 
 public struct TermHint: Hashable, Sendable {
     public let text: String
-    public init(_ text: String) { self.text = text }
+    /// 明示の読み。**ASCII の語には要る。**
+    /// `kintone` は自動では「きんとね」と読まれ（ローマ字読み）、
+    /// 実際の発音「きんとーん」と離れてしまう。
+    public let reading: String?
+
+    public init(_ text: String, reading: String? = nil) {
+        self.text = text
+        self.reading = reading
+    }
+
+    /// 設定 1 行を読む。`kintone きんとーん` / `kintone,きんとーん` / `kintone` のいずれも受ける。
+    /// **読みを書かなくても動く**ことを崩さない（既存の辞書がそのまま使える）。
+    public static func parse(_ line: String) -> TermHint? {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return nil }
+        let parts = t.split(whereSeparator: { $0 == "," || $0 == "\t" || $0 == " " || $0 == "　" })
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard let head = parts.first else { return nil }
+        return TermHint(head, reading: parts.count > 1 ? parts[1] : nil)
+    }
+
+    /// 比較に使う形の読み。
+    public var comparableReading: String {
+        JapaneseReading.normalize(reading ?? JapaneseReading.reading(of: text))
+    }
 }
 
 public struct TranscriptionRequest: Sendable {

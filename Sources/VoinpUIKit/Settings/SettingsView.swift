@@ -196,6 +196,10 @@ struct RecognitionSettings: View {
                     }
                 Text("\(model.settings.transcription.termHints.count) 語（上限 100。多すぎるとかえって精度が落ちます）")
                     .font(.system(size: 10)).foregroundStyle(.tertiary)
+                // ASCII の語は自動ではローマ字読みになる（kintone → きんとね）。
+                // 読みを書いておくと、誤変換された箇所を読みから探せるようになる。
+                Text("1 行 1 語。読みを添えられます — 例: kintone きんとーん")
+                    .font(.system(size: 10)).foregroundStyle(.tertiary)
             }
         }
         .formStyle(.grouped)

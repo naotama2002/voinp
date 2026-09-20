@@ -58,8 +58,11 @@ enum AlternativesProbe {
         } else {
             print("辞書: なし")
         }
-        print("音声: \(url.lastPathComponent)")
+        let seconds = (try? AVAudioFile(forReading: url))
+            .map { Double($0.length) / $0.processingFormat.sampleRate } ?? 0
+        print(String(format: "音声: %@（%.1f 秒）", url.lastPathComponent, seconds))
         print(String(repeating: "─", count: 70))
+        let began = ContinuousClock.now
 
         let parts = AsyncStream<AnalyzerInput>.makeStream(bufferingPolicy: .unbounded)
 
@@ -86,6 +89,14 @@ enum AlternativesProbe {
             parts.continuation.finish()
         }
         await printing.value
+
+        // **2 周目が成立するかはここで決まる。**
+        // 条件を変えて認識し直す案は、実時間より十分速くないと使えない。
+        let elapsed = Double((began.duration(to: .now)).components.seconds)
+            + Double((began.duration(to: .now)).components.attoseconds) / 1e18
+        print(String(repeating: "─", count: 70))
+        print(String(format: "認識にかかった時間: %.2f 秒（音声 %.1f 秒の %.2f 倍速）",
+                     elapsed, seconds, seconds > 0 ? seconds / elapsed : 0))
     }
 
     // MARK: - 出力
